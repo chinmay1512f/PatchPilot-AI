@@ -2,6 +2,9 @@
 
 **Claude-powered bug investigation, repair and security review — where every claim is backed by real execution or labelled as AI interpretation.**
 
+**Live demo:** <https://patch-pilot-ai-kohl.vercel.app> · API: <https://patchpilot-api-tkay.onrender.com/api/health>
+(free hosting: the first request after a quiet period can take about a minute while the server wakes up; public demo limited to 5 analyses per hour, one at a time)
+
 AI coding tools write code fast, but their fixes are often unverified, too broad, or quietly insecure. PatchPilot takes a repository and a bug report and answers five questions with evidence:
 
 1. **What is wrong?** — Claude investigates with read-only tools; every cited file/line is checked against the real code.
