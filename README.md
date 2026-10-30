@@ -105,6 +105,12 @@ Each is available in the UI under **New analysis → Bundled demo repositories**
 
 All settings are environment variables (see `.env.example`): model (`PATCHPILOT_MODEL`, default `claude-opus-5-5`), effort, refusal fallback, execution backend, sandbox limits, repair attempts, token budget, scanner toggles, and `PATCHPILOT_LLM_MODE=record|replay` for a clearly-labelled replay of a previously recorded real run (tool execution stays live).
 
+Public deployments add usage limits (`PATCHPILOT_MAX_JOBS_PER_HOUR`, `…_PER_DAY`, `…_CONCURRENT_JOBS`), allowed frontend origins (`PATCHPILOT_CORS_ORIGINS` / `PATCHPILOT_CORS_ORIGIN_REGEX`) and a separate unprivileged sandbox user (`PATCHPILOT_SANDBOX_UID`).
+
+## Deployment
+
+Frontend on **Vercel**, backend on **Render** (Docker): see [docs/DEPLOY.md](docs/DEPLOY.md). The backend needs a long-running server with a disk and the ability to run test tools, so it cannot run as Vercel serverless functions.
+
 ## Project structure
 
 ```

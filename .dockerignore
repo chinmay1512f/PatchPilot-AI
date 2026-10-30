@@ -1,0 +1,26 @@
+# Never send secrets or local state into the image build
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+
+# runtime data: only the demo replay recording is copied explicitly in the Dockerfile
+data/*
+!data/recordings/
+data/recordings/*
+!data/recordings/demo-buggy-shop.json
+
+# the frontend is deployed separately (Vercel)
+frontend
+
+.claude
+.vscode
+.idea

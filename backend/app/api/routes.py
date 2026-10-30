@@ -13,6 +13,7 @@ from fastapi.responses import PlainTextResponse, Response
 from starlette.concurrency import run_in_threadpool
 
 from ..config import PROJECT_DIR
+from ..core.limits import JobLimiter, LimitExceeded
 from ..core.models import AnalysisType, Job, JobOptions
 from ..ingest.archive import SKIP_DIRS, ArchiveError, safe_extract_zip
 from ..ingest.github import GitHubError, download_github_zip, parse_github_url
@@ -29,6 +30,16 @@ _NAME_RE = re.compile(r"[^A-Za-z0-9 ._-]")
 
 def _state(request: Request):
     return request.app.state.orchestrator, request.app.state.store, request.app.state.settings
+
+
+def _reserve_slot(request: Request) -> JobLimiter:
+    """Apply the public-demo usage limits before any work (or Claude spending) starts."""
+    limiter: JobLimiter = request.app.state.limiter
+    try:
+        limiter.reserve(request.app.state.store.count_active())
+    except LimitExceeded as e:
+        raise HTTPException(429, e.message, headers={"Retry-After": str(e.retry_after)}) from e
+    return limiter
 
 
 async def _save_upload(upload: UploadFile, dest: Path, max_bytes: int) -> None:
@@ -74,6 +85,7 @@ def health(request: Request):
         | {"osv_api": s.osv_enabled, "builtin_secrets": True, "builtin_suspicious": True},
         "limits": {"max_upload_mb": s.max_upload_mb, "max_extracted_mb": s.max_extracted_mb, "max_files": s.max_files,
                    "sandbox_timeout_seconds": s.sandbox_timeout_seconds, "max_repair_attempts": s.max_repair_attempts},
+        "demo_limits": request.app.state.limiter.status(),
     }
 
 
@@ -141,6 +153,7 @@ async def create_job(
             raise HTTPException(400, "The bug description is too short — write at least a sentence, or leave it empty to skip repair.")
     use_modified = has_modified and analysis_type in (AnalysisType.patch_review, AnalysisType.full_analysis)
 
+    limiter = _reserve_slot(request)
     job, ws = orch.new_job("pending", analysis_type, bug_description, JobOptions(allow_local_execution=allow_local_execution, run_security_scan=run_security_scan))
     try:
         info, source, default_name = await _acquire(s, ws, "original", file if has_file else None, repo_url, ws.original)
@@ -149,11 +162,13 @@ async def create_job(
             _, mod_source, _ = await _acquire(s, ws, "modified", modified_file if modified_file is not None and modified_file.filename else None,
                                              modified_repo_url, ws.modified)
             job.has_modified_upload, job.modified_source = True, mod_source
-    except HTTPException:
+    except BaseException:
+        limiter.release()
         ws.delete()
         raise
     job.project_name = _NAME_RE.sub("", project_name or default_name)[:80] or "repository"
     store.save(job)
+    limiter.commit()
     where = f"downloaded from GitHub ({source.split(':', 1)[1]})" if source.startswith("github:") else "uploaded"
     store.add_audit(job.id, "upload", f"archive {where} and extracted safely: {info['files_extracted']} files, {info['entries_skipped']} entries skipped (VCS/build dirs)")
     orch.submit(job.id)
@@ -252,13 +267,20 @@ def rerun(request: Request, job_id: str):
     old_ws = Workspace(s.workspaces_dir, old.id)
     if not old_ws.original.exists():
         raise HTTPException(410, "original upload no longer available")
+    limiter = _reserve_slot(request)
     job, ws = orch.new_job(old.project_name, old.analysis_type, old.bug_description, old.options)
-    shutil.copytree(old_ws.original, ws.original, dirs_exist_ok=True)
-    if old_ws.modified.exists():
-        shutil.copytree(old_ws.modified, ws.modified, dirs_exist_ok=True)
-        job.has_modified_upload, job.modified_source = True, old.modified_source
+    try:
+        shutil.copytree(old_ws.original, ws.original, dirs_exist_ok=True)
+        if old_ws.modified.exists():
+            shutil.copytree(old_ws.modified, ws.modified, dirs_exist_ok=True)
+            job.has_modified_upload, job.modified_source = True, old.modified_source
+    except BaseException:
+        limiter.release()
+        ws.delete()
+        raise
     job.source = old.source
     store.save(job)
+    limiter.commit()
     store.add_audit(job.id, "rerun", f"re-run of {old.id}")
     orch.submit(job.id)
     return job.summary()

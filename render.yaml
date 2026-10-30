@@ -1,0 +1,33 @@
+# Render Blueprint for the PatchPilot AI backend (Dashboard → New → Blueprint → pick this repo).
+# The frontend goes on Vercel; see docs/DEPLOY.md.
+services:
+  - type: web
+    name: patchpilot-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Entered by you in the Render dashboard; never committed to the repository.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Public demo protection: caps Claude spending from the public link.
+      - key: PATCHPILOT_MAX_JOBS_PER_HOUR
+        value: "5"
+      - key: PATCHPILOT_MAX_JOBS_PER_DAY
+        value: "25"
+      - key: PATCHPILOT_MAX_CONCURRENT_JOBS
+        value: "1"
+      # Let the Vercel-hosted frontend call this API from the browser.
+      - key: PATCHPILOT_CORS_ORIGIN_REGEX
+        value: ^https://[A-Za-z0-9-]+\.vercel\.app$
+      - key: PATCHPILOT_LLM_MODE
+        value: live
+      - key: PATCHPILOT_FAST_MODE
+        value: "true"
+      # Small free instance (512 MB): keep test runs and Semgrep within memory.
+      - key: PATCHPILOT_SANDBOX_MEMORY_MB
+        value: "512"
+      - key: PATCHPILOT_SEMGREP_MAX_MEMORY_MB
+        value: "300"

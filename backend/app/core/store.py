@@ -79,6 +79,10 @@ class JobStore:
             self.save(job)
             return job
 
+    def count_active(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("SELECT COUNT(*) FROM jobs WHERE status IN ('pending', 'running')").fetchone()[0]
+
     def delete(self, job_id: str) -> None:
         with self._lock, self._connect() as conn:
             conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))

@@ -139,7 +139,8 @@ def run_semgrep(root: Path, index: RepoIndex | None, settings: Settings, files: 
     targets = [str(root / f) for f in files if (root / f).is_file()] if files is not None else [str(root)]
     if not targets:
         return ScannerRun(name="semgrep", status="skipped", message="no files to scan"), []
-    cmd = [exe, "scan", "--config", config, "--json", "--metrics=off", "--disable-version-check", "--quiet", "--exclude", ".patchpilot", *targets]
+    mem = ["--max-memory", str(settings.semgrep_max_memory_mb)] if settings.semgrep_max_memory_mb > 0 else []
+    cmd = [exe, "scan", "--config", config, "--json", "--metrics=off", "--disable-version-check", "--quiet", *mem, "--exclude", ".patchpilot", *targets]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=settings.scanner_timeout_seconds, env=_tool_env())
     except subprocess.TimeoutExpired:

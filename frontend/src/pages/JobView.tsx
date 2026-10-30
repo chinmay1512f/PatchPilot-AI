@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "../api";
+import { api, apiUrl } from "../api";
 import type { Job } from "../types";
 import { ANALYSIS_LABEL, Badge, Icon, StatusBadge, fmtTime } from "../ui";
 import { ActivityTab, BugsTab, OverviewTab, PatchTab, ReportTab, ScopeTab, SecurityTab, TestsTab } from "./JobTabs";
@@ -79,7 +79,7 @@ export function JobView({ id }: { id: string }) {
           </p>
         </div>
         <div className="row">
-          {job.results.report && <a className="btn" href={`/api/jobs/${job.id}/report.md`}><Icon name="download" size={14} /> Report</a>}
+          {job.results.report && <a className="btn" href={apiUrl(`/api/jobs/${job.id}/report.md`)}><Icon name="download" size={14} /> Report</a>}
           {!running && <button className="btn" onClick={rerun}><Icon name="refresh" size={14} /> Re-run</button>}
         </div>
       </div>

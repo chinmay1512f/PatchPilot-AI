@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api";
+import { api, apiUrl } from "./api";
 import type { Health } from "./types";
 import { Icon } from "./ui";
 import { Dashboard } from "./pages/Dashboard";
@@ -73,7 +73,7 @@ export function App() {
           <span className="spacer" />
           <span>Version 0.1 · AgentX Hackathon build</span>
           <span className="spacer" />
-          <a href="/api/docs" target="_blank" rel="noreferrer">API docs</a>
+          <a href={apiUrl("/api/docs")} target="_blank" rel="noreferrer">API docs</a>
           <span>Original code is never modified</span>
         </div>
       </footer>

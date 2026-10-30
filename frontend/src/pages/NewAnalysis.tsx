@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../api";
+import { api, apiUrl } from "../api";
 import type { AnalysisType, Health, Sample } from "../types";
 import { Badge, Icon, type IconName } from "../ui";
 
@@ -94,6 +94,12 @@ export function NewAnalysis({ health }: { health: Health | null }) {
   const executes = needsBug || isFull;
   const showModified = type === "patch_review";
   const docker = health?.execution.docker.available;
+  const dl = health?.demo_limits;
+  const demoNote = dl ? "Public demo: " + [
+    dl.per_hour ? `up to ${dl.per_hour} analyses per hour` : "",
+    dl.per_day ? `${dl.per_day} per day` : "",
+    dl.concurrent ? (dl.concurrent === 1 ? "one at a time" : `${dl.concurrent} at a time`) : "",
+  ].filter(Boolean).join(", ") + ". Browsing the dashboard and finished reports is unlimited." : "";
 
   async function useSample(s: Sample) {
     setErr("");
@@ -233,6 +239,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
           </div>
 
           {err && <div className="alert bad">{err}</div>}
+          {demoNote && <div className="alert info">{demoNote}</div>}
           {isFull && !docker && !allowLocal && (
             <div className="alert warn">Tick “I trust this repository” above so agents 3–5 can run tests. Without it, bugs can still be found but not proven, fixed and verified.</div>
           )}
@@ -253,7 +260,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
                   <div className="row">
                     <Badge tone="accent">{s.analysis_type.replace(/_/g, " ")}</Badge>
                     <span className="spacer" />
-                    <a className="btn small" href={`/api/samples/${s.name}/download`}><Icon name="download" size={14} /> ZIP</a>
+                    <a className="btn small" href={apiUrl(`/api/samples/${s.name}/download`)}><Icon name="download" size={14} /> ZIP</a>
                     <button className="btn small primary" onClick={() => useSample(s)} disabled={busy}>Use sample</button>
                   </div>
                 </div>

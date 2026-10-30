@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { apiUrl } from "../api";
 import { BarChart } from "../charts";
 import type { Job, PatchScopeReport, SecurityFinding, TestRun, VerificationResult } from "../types";
 import {
@@ -46,7 +47,7 @@ function ProofCard({ job }: { job: Job }) {
           <div className="row"><h2 style={{ fontSize: 19 }}>{title}</h2><Src kind="tool" /></div>
           <div className="muted" style={{ marginTop: 2 }}>{v.reasons[0] ?? ""}{ok && " Verified against the configured checks — not a claim that the code is bug-free."}</div>
         </div>
-        {patch && <a className="btn" href={`/api/jobs/${job.id}/patch.diff?attempt=${patch.attempt}`}><Icon name="download" size={14} /> Download patch</a>}
+        {patch && <a className="btn" href={apiUrl(`/api/jobs/${job.id}/patch.diff?attempt=${patch.attempt}`)}><Icon name="download" size={14} /> Download patch</a>}
       </div>
       <div className="proof-metrics">
         <div className="proof-metric">
@@ -338,7 +339,7 @@ export function PatchTab({ job }: { job: Job }) {
               <div className="card-head">
                 <h2>Attempt {p.attempt}{idx === 0 && patches.length > 1 ? " (latest)" : ""}</h2><Src kind="model" />
                 {v && <StatusBadge status={v.status} />}
-                <a className="btn small" href={`/api/jobs/${job.id}/patch.diff?attempt=${p.attempt}`}><Icon name="download" size={14} /> .diff</a>
+                <a className="btn small" href={apiUrl(`/api/jobs/${job.id}/patch.diff?attempt=${p.attempt}`)}><Icon name="download" size={14} /> .diff</a>
               </div>
               <div>{p.summary}</div>
               <div className="row small" style={{ margin: "10px 0" }}>
@@ -606,8 +607,8 @@ export function ReportTab({ job }: { job: Job }) {
   return (
     <div className="stack">
       <div className="row">
-        <a className="btn" href={`/api/jobs/${job.id}/report.md`}><Icon name="download" size={14} /> Markdown</a>
-        <a className="btn" href={`/api/jobs/${job.id}/report.json`}><Icon name="download" size={14} /> Full JSON evidence</a>
+        <a className="btn" href={apiUrl(`/api/jobs/${job.id}/report.md`)}><Icon name="download" size={14} /> Markdown</a>
+        <a className="btn" href={apiUrl(`/api/jobs/${job.id}/report.json`)}><Icon name="download" size={14} /> Full JSON evidence</a>
         <span className="muted small">Generated {fmtTime(r.generated_at)}</span>
       </div>
       <div className="card"><Markdown text={r.markdown} /></div>

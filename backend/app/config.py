@@ -67,6 +67,19 @@ class Settings(BaseSettings):
     sandbox_timeout_seconds: int = 120
     sandbox_memory_mb: int = 1024
     sandbox_max_processes: int = 16
+    # POSIX only: run untrusted test code as this unprivileged user id (the server must run as root to
+    # switch to it). Used on public deployments so test code cannot read the server's environment
+    # (e.g. the API key via /proc). 0 = off (local development).
+    sandbox_uid: int = 0
+
+    # --- Public demo protection (0 = no limit). In-memory, so the counters reset on restart. ---
+    max_jobs_per_hour: int = 0
+    max_jobs_per_day: int = 0
+    max_concurrent_jobs: int = 0
+
+    # --- CORS: browser origins allowed to call the API when the frontend is hosted elsewhere ---
+    cors_origins: str = ""  # comma-separated, e.g. "https://patchpilot.vercel.app" ("*" = any)
+    cors_origin_regex: str = ""  # e.g. "^https://.*\.vercel\.app$"
 
     # --- Workflow ---
     max_repair_attempts: int = 2
@@ -78,6 +91,7 @@ class Settings(BaseSettings):
     semgrep_config: str = ""  # empty = bundled local rules (no network)
     disabled_scanners: str = ""  # comma-separated, e.g. "semgrep,osv" — reported as skipped, never faked
     patch_recheck_semgrep: bool = False  # re-run Semgrep on the patched files (slow start on Windows); full-repo Semgrep scan always runs
+    semgrep_max_memory_mb: int = 0  # 0 = Semgrep default; set on small servers (e.g. 512 MB hosts)
     scanner_timeout_seconds: int = 180
 
     @property

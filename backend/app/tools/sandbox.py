@@ -244,7 +244,8 @@ class LocalRestrictedBackend(Backend):
         if os.name == "nt":
             self.detail = f"Windows Job Object ({limits}), scrubbed env, network blocked in-process (best effort). Not a hard security boundary."
         else:
-            self.detail = f"POSIX rlimits ({limits}), scrubbed env, network blocked in-process (best effort). Not a hard security boundary."
+            who = f"separate unprivileged user (uid {settings.sandbox_uid}), " if settings.sandbox_uid else ""
+            self.detail = f"POSIX rlimits ({limits}), {who}scrubbed env, network blocked in-process (best effort). Not a hard security boundary."
 
     def _env(self, workdir: Path) -> dict[str, str]:
         pp = workdir / ".patchpilot"
@@ -269,8 +270,40 @@ class LocalRestrictedBackend(Backend):
 
     def run_python_tool(self, workdir, tool, args, timeout):
         self.prepare(workdir)
+        display = f"python -m {tool} {' '.join(args)}"
+        if self.s.sandbox_uid and os.name != "nt":
+            if os.geteuid() != 0:  # fail closed: never fall back to running as the server's own user
+                reason = ("PATCHPILOT_SANDBOX_UID is set but the server is not running as root, so it cannot switch to "
+                          "the sandbox user. Untrusted code was not executed.")
+                return ExecResult(self.name, display, None, "", 0.0, blocked=True, blocked_reason=reason)
+            hand_over(workdir, self.s.sandbox_uid, self.s.data_dir)
         cmd = [sys.executable, "-E", "-s", str(workdir / ".patchpilot" / "sandbox_boot.py"), tool, *args]
-        return _run(self.name, cmd, workdir, self._env(workdir), timeout, settings=self.s, display=f"python -m {tool} {' '.join(args)}")
+        return _run(self.name, cmd, workdir, self._env(workdir), timeout, settings=self.s, display=display)
+
+
+def lock_down_data_dir(settings: Settings) -> None:
+    """With a sandbox user configured (POSIX, server running as root): keep the database, uploads and
+    other jobs private. Directories stay traversable (0711) so the sandbox user can reach the one work
+    directory it is given, but it cannot list them or read files it does not own."""
+    for d in (settings.data_dir, settings.workspaces_dir):
+        os.chmod(d, 0o711)
+    os.chmod(settings.recordings_dir, 0o700)
+    for f in settings.data_dir.glob("patchpilot.db*"):
+        os.chmod(f, 0o600)
+
+
+def hand_over(workdir: Path, uid: int, data_dir: Path) -> None:
+    """Give one disposable work directory to the sandbox user: parents traversable, the directory
+    itself owned by that user, nothing else."""
+    root = data_dir.resolve()
+    p = workdir.resolve().parent
+    while p != root and root in p.parents:
+        os.chmod(p, 0o711)
+        p = p.parent
+    for dirpath, dirnames, filenames in os.walk(workdir):
+        os.lchown(dirpath, uid, uid)
+        for name in dirnames + filenames:
+            os.lchown(os.path.join(dirpath, name), uid, uid)
 
 
 def _run(name, cmd, cwd, env, timeout, settings: Settings | None = None, display: str = "") -> ExecResult:
@@ -285,7 +318,7 @@ def _run(name, cmd, cwd, env, timeout, settings: Settings | None = None, display
             kwargs["start_new_session"] = True
         try:
             p = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **kwargs)
-        except OSError as e:
+        except (OSError, subprocess.SubprocessError) as e:  # SubprocessError: preexec_fn failed (e.g. could not drop privileges)
             return ExecResult(name, display, None, f"failed to start: {e}", 0.0, blocked=True, blocked_reason=str(e))
         try:
             raw, _ = p.communicate(timeout=timeout)
@@ -314,6 +347,13 @@ def _posix_limits(settings: Settings | None):
                 resource.setrlimit(lim, (val, val))
             except (ValueError, OSError):
                 pass
+        uid = settings.sandbox_uid if settings else 0
+        if uid:  # drop to the unprivileged sandbox user; any failure aborts the start (fail closed)
+            os.setgroups([])
+            os.setgid(uid)
+            os.setuid(uid)
+            if os.getuid() != uid or os.geteuid() != uid:
+                raise OSError("could not drop privileges to the sandbox user")
     return apply
 
 
