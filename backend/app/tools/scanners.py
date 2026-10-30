@@ -21,7 +21,7 @@ from pathlib import Path
 
 import httpx
 
-from ..config import Settings
+from ..config import PROJECT_DIR, Settings
 from ..core.models import Confidence, ScannerRun, SecurityFinding, SecurityReport, Severity, new_id
 from ..ingest.indexer import RepoIndex
 from ..ingest.secrets import find_secrets, redact
@@ -30,6 +30,7 @@ from .suspicious import scan_repo
 
 RULES_FILE = Path(__file__).with_name("semgrep_rules.yml")
 _TOOL_DIR = str(Path(sys.executable).parent)
+_EXTRA_TOOL_DIRS = [str(PROJECT_DIR / ".venv-semgrep" / ("Scripts" if os.name == "nt" else "bin"))]
 
 # Overlapping rules from different tools collapse into one finding.
 _FAMILIES = {
@@ -44,7 +45,9 @@ _FAMILIES = {
 
 
 def _which(name: str) -> str | None:
-    return shutil.which(name, path=_TOOL_DIR + os.pathsep + os.environ.get("PATH", ""))
+    # Also look in the project's .venv-semgrep: Semgrep needs its own environment (dependency conflict
+    # with FastAPI), see backend/requirements-semgrep.txt.
+    return shutil.which(name, path=os.pathsep.join([_TOOL_DIR, *_EXTRA_TOOL_DIRS, os.environ.get("PATH", "")]))
 
 
 def _tool_env() -> dict[str, str]:

@@ -6,6 +6,12 @@ if (-not (Test-Path ".venv")) {
     python -m venv .venv
     .\.venv\Scripts\python -m pip install -r backend\requirements.txt
 }
+if (-not (Test-Path ".venv-semgrep")) {
+    # Semgrep needs its own environment (dependency conflict with FastAPI). Optional: without it the
+    # Semgrep scanner is reported as unavailable and the other scanners still run.
+    python -m venv .venv-semgrep
+    .\.venv-semgrep\Scripts\python -m pip install -r backend\requirements-semgrep.txt
+}
 if (-not (Test-Path "frontend\dist")) {
     Push-Location frontend; npm install; npm run build; Pop-Location
 }

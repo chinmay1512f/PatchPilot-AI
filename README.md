@@ -67,6 +67,8 @@ Requirements: Python 3.11+, Node 18+. Docker optional.
 cp .env.example .env          # then set ANTHROPIC_API_KEY
 python -m venv .venv
 .venv/Scripts/pip install -r backend/requirements.txt     # macOS/Linux: .venv/bin/pip
+# Semgrep conflicts with FastAPI's dependencies, so it gets its own environment (optional):
+python -m venv .venv-semgrep && .venv-semgrep/Scripts/pip install -r backend/requirements-semgrep.txt
 cd frontend && npm install && npm run build && cd ..
 .venv/Scripts/python -m uvicorn --app-dir backend app.main:app --port 8000
 ```

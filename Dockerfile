@@ -16,8 +16,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-COPY backend/requirements.txt backend/requirements.txt
+COPY backend/requirements.txt backend/requirements-semgrep.txt backend/
+# Semgrep conflicts with FastAPI over opentelemetry-api, so it gets its own virtualenv and is only
+# used as a command-line tool (symlinked onto PATH).
 RUN pip install -r backend/requirements.txt \
+ && python -m venv /opt/semgrep \
+ && /opt/semgrep/bin/pip install -r backend/requirements-semgrep.txt \
+ && ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep \
+ && semgrep --version \
  && groupadd --system --gid 10001 sandbox \
  && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin sandbox
 

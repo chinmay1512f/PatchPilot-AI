@@ -1,0 +1,4 @@
+# Semgrep pins opentelemetry-api~=1.37 while FastAPI needs >=1.44, so it cannot share an environment
+# with the app. Install it into its own virtualenv (.venv-semgrep locally, /opt/semgrep in Docker);
+# PatchPilot only runs it as a command-line tool.
+semgrep==1.182.1
