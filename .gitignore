@@ -1,0 +1,32 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# runtime data (uploads, workspaces, database, recordings) — keep only the demo replay recording
+data/*
+!data/recordings/
+data/recordings/*
+!data/recordings/demo-buggy-shop.json
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# node
+frontend/node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# editors / OS / local tool config
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

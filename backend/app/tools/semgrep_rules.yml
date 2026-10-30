@@ -1,0 +1,69 @@
+rules:
+  - id: patchpilot.python.sql-string-format
+    languages: [python]
+    severity: ERROR
+    message: SQL query built with string formatting; use parameterised queries to avoid SQL injection.
+    metadata: {cwe: "CWE-89", category: security}
+    pattern-either:
+      - pattern: $CUR.execute(f"...", ...)
+      - pattern: $CUR.execute("..." % $X, ...)
+      - pattern: $CUR.execute("..." + $X, ...)
+      - pattern: $CUR.execute("...".format(...), ...)
+  - id: patchpilot.python.subprocess-shell-true
+    languages: [python]
+    severity: WARNING
+    message: subprocess call with shell=True; untrusted input in the command enables command injection.
+    metadata: {cwe: "CWE-78", category: security}
+    pattern: subprocess.$FN(..., shell=True, ...)
+  - id: patchpilot.python.pickle-load
+    languages: [python]
+    severity: ERROR
+    message: pickle deserialisation of data that may be untrusted allows arbitrary code execution.
+    metadata: {cwe: "CWE-502", category: security}
+    pattern-either:
+      - pattern: pickle.loads(...)
+      - pattern: pickle.load(...)
+  - id: patchpilot.python.yaml-unsafe-load
+    languages: [python]
+    severity: ERROR
+    message: yaml.load without SafeLoader can construct arbitrary Python objects.
+    metadata: {cwe: "CWE-502", category: security}
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+      - pattern-not: yaml.load(..., Loader=SafeLoader, ...)
+  - id: patchpilot.python.eval-input
+    languages: [python]
+    severity: ERROR
+    message: eval/exec on a non-literal value; if user-controlled this is arbitrary code execution.
+    metadata: {cwe: "CWE-95", category: security}
+    patterns:
+      - pattern-either:
+          - pattern: eval($X)
+          - pattern: exec($X)
+      - pattern-not: eval("...")
+      - pattern-not: exec("...")
+  - id: patchpilot.python.requests-verify-false
+    languages: [python]
+    severity: WARNING
+    message: TLS certificate verification disabled.
+    metadata: {cwe: "CWE-295", category: security}
+    pattern: requests.$FN(..., verify=False, ...)
+  - id: patchpilot.python.weak-hash
+    languages: [python]
+    severity: WARNING
+    message: MD5/SHA1 are not suitable for security purposes (passwords, signatures).
+    metadata: {cwe: "CWE-327", category: security}
+    pattern-either:
+      - pattern: hashlib.md5(...)
+      - pattern: hashlib.sha1(...)
+  - id: patchpilot.python.path-traversal-open
+    languages: [python]
+    severity: WARNING
+    message: File path built from a function parameter without normalisation; check for path traversal.
+    metadata: {cwe: "CWE-22", category: security}
+    patterns:
+      - pattern-inside: |
+          def $F(..., $P, ...):
+              ...
+      - pattern: open(os.path.join($BASE, $P), ...)

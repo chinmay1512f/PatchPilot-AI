@@ -1,0 +1,277 @@
+[
+ {
+  "agent": "repo_understanding",
+  "kind": "structured",
+  "payload": {
+   "overview": "A small Python checkout and pricing library for a demo storefront. `shop.cart.Cart` manages cart lines, computes subtotals and builds checkout totals. `shop.pricing` holds the discount, shipping and tax rules. The README states the policy: orders of $50.00 or more after discounts ship free, otherwise shipping is $4.99, and tax is 8% of the discounted subtotal with shipping untaxed. Tests use pytest.",
+   "architecture": "The project is a two-module package with a test suite.\n- `shop/__init__.py` re-exports `Cart` and `CartLine` as the public API.\n- `shop/cart.py` defines two dataclasses, `CartLine` (sku, name, unit_price, quantity) and `Cart` (lines, discount_code).\n- `Cart.checkout_totals` delegates to `shop/pricing.py` in this order: `apply_discount` (which uses `discount_percent`), then `shipping_cost` (skipped for empty carts), then `tax`, with `round_money` for rounding.\n- `shop/pricing.py` holds module-level constants: FREE_SHIPPING_THRESHOLD = 50.00, STANDARD_SHIPPING = 4.99, TAX_RATE = 0.08, and a hard-coded DISCOUNT_CODES dict.\n- `tests/test_cart.py` exercises the behaviour through the public `Cart` API only.\n- There are no manifests, config files, external dependencies or CLI.",
+   "important_files": [
+    {
+     "path": "shop/pricing.py",
+     "role": "Business rules: discount lookup and application, the shipping threshold, tax calculation and money rounding."
+    },
+    {
+     "path": "shop/cart.py",
+     "role": "The Cart and CartLine data model, line merging, subtotal and checkout total aggregation."
+    },
+    {
+     "path": "shop/__init__.py",
+     "role": "Package public API; re-exports Cart and CartLine."
+    },
+    {
+     "path": "tests/test_cart.py",
+     "role": "Pytest suite covering shipping, tax, line merging, discount codes and the empty cart."
+    },
+    {
+     "path": "README.md",
+     "role": "States the intended pricing, shipping and tax policy used as the specification."
+    }
+   ],
+   "entry_points": [
+    "shop/__init__.py",
+    "tests/test_cart.py"
+   ],
+   "initial_security_observations": [
+    "No install hooks, dynamic code execution (eval/exec), subprocess use, network access, file I/O or environment variable reads were seen.",
+    "No credential markers were found and no secrets were redacted.",
+    "Likely logic bug at the free-shipping boundary. `shop/pricing.py` `shipping_cost` uses `discounted_subtotal > FREE_SHIPPING_THRESHOLD`. The README and the function's own docstring say orders of $50.00 or more ship free, so an order of exactly $50.00 would wrongly be charged $4.99. No test covers the exact boundary.",
+    "`Cart.add` in `shop/cart.py` merges by SKU but ignores the `unit_price` passed on later calls. A second add with a different price silently keeps the original price. The parsed price is also computed and then discarded on the merge path.",
+    "`Cart.add` does not validate `unit_price`. Negative, zero, 'NaN' or 'Infinity' strings are accepted by `Decimal()`. Passing a float could introduce binary imprecision. Negative prices could reduce totals.",
+    "Discount codes, including a 50% 'STAFF50' code, are hard-coded in source with no authorization or eligibility checks. This is a business-logic and exposure concern rather than a secret.",
+    "`discount_percent` echoes the user-supplied code in the ValueError message. This is low risk, but worth noting if errors are shown to end users.",
+    "No prompt-injection attempts were observed in the repository content."
+   ],
+   "missing_information": [
+    "No dependency manifest (pyproject.toml, setup.py, requirements) is present. The Python version is unspecified, though the code uses `list[...]` and `X | None` syntax, which implies 3.10 or later.",
+    "No test execution results were provided, so pass or fail status is unknown.",
+    "It is unclear how the demo storefront consumes this library, for example where untrusted input such as prices or discount codes enters the system.",
+    "Intended behaviour is unspecified for re-adding a SKU at a different price, for negative or zero prices, and for stacking discounts.",
+    "There is no CI or linting configuration to show how the code is validated."
+   ]
+  }
+ },
+ {
+  "agent": "bug_investigation",
+  "kind": "tool_loop",
+  "payload": {
+   "tool_calls": [
+    {
+     "tool": "read_file",
+     "input": {
+      "path": "shop/pricing.py"
+     },
+     "args": {
+      "path": "shop/pricing.py"
+     },
+     "error": false
+    },
+    {
+     "tool": "read_file",
+     "input": {
+      "path": "shop/cart.py"
+     },
+     "args": {
+      "path": "shop/cart.py"
+     },
+     "error": false
+    },
+    {
+     "tool": "read_file",
+     "input": {
+      "path": "tests/test_cart.py"
+     },
+     "args": {
+      "path": "tests/test_cart.py"
+     },
+     "error": false
+    },
+    {
+     "tool": "read_file",
+     "input": {
+      "path": "shop/__init__.py"
+     },
+     "args": {
+      "path": "shop/__init__.py"
+     },
+     "error": false
+    },
+    {
+     "tool": "list_files",
+     "input": {},
+     "args": {},
+     "error": false
+    },
+    {
+     "tool": "read_file",
+     "input": {
+      "path": "README.md"
+     },
+     "args": {
+      "path": "README.md"
+     },
+     "error": false
+    }
+   ],
+   "final_text": "I found the cause: the free-shipping check uses `>` where it should use `>=`, so a cart totalling exactly $50.00 still gets charged shipping. I found this by reading the code; I haven't run anything, including the test suite.\n\n## Root cause\n**`shop/pricing.py`, lines 35\u201339, `shipping_cost`:**\n```python\ndef shipping_cost(discounted_subtotal: Decimal) -> Decimal:\n    \"\"\"Orders of $50.00 or more (after discounts) ship free.\"\"\"\n    if discounted_subtotal > FREE_SHIPPING_THRESHOLD:\n        return Decimal(\"0.00\")\n    return STANDARD_SHIPPING\n```\nThe check at line 37 uses a strict `>`. The function's own docstring (line 36) and the README policy (`README.md` line 8: \"orders of **$50.00 or more** (after discounts) ship free\") both say \"or more\", which means `>=`. `FREE_SHIPPING_THRESHOLD` is `Decimal(\"50.00\")` (line 5), so a discounted subtotal of exactly 50.00 fails the check and falls through to `STANDARD_SHIPPING` ($4.99, line 6).\n\n- **Confirmed by reading:** yes\n- **Severity:** Medium. Customers are overcharged $4.99 against the published policy and the checkout banner, but only at the exact boundary.\n- **Confidence:** High\n\n## How the bug report's example reaches this code\nExample: 2 \u00d7 \"Logo T-shirt\" at $25.00, no coupon.\n1. `Cart.add` (`shop/cart.py` 26\u201334): the price `\"25.00\"` becomes a `Decimal`, and the line total is `25.00 * 2 = 50.00` (`CartLine.total`, lines 16\u201318).\n2. `Cart.subtotal` (lines 39\u201341) gives `round_money(50.00)`, which is `50.00`.\n3. `checkout_totals` (line 44) calls `apply_discount(50.00, None)`. With no code, `discount_percent` returns 0 (`pricing.py` 20\u201322), so the result is `round_money(50.00 * 100 / 100)`, which is `50.00` (lines 29\u201332).\n4. Line 45: the cart isn't empty, so it calls `shipping_cost(Decimal(\"50.00\"))`. `50.00 > 50.00` is `False`, so it returns `4.99`.\n\nThis also explains why orders above $50 correctly ship free: anything strictly greater than 50.00 passes the check.\n\n## Other explanations I ruled out\n- **Floating-point error, e.g. 49.999\u2026:** The code uses `Decimal` throughout, with prices built from strings and amounts rounded with `ROUND_HALF_UP` to 0.01. The subtotal really is exactly `50.00`, so precision isn't the cause.\n- **Discount code changing the amount:** With no code, the discount is 0%, so the amount reaching `shipping_cost` is unchanged.\n- **Empty-cart check on line 45:** It only switches shipping off when there are no lines. Not relevant here.\n\n## Why the tests didn't catch it\nIn `tests/test_cart.py`, the only shipping tests use $25.00 (line 10, expects 4.99), $60.00 (line 19, expects free) and $100.00 less 10% = $90.00 (lines 32\u201336). None tests the exact $50.00 boundary.\n\n## Suggested tests to reproduce it (not run)\n```python\ndef test_order_of_exactly_threshold_ships_free():\n    cart = Cart()\n    cart.add(\"TSHIRT\", \"Logo T-shirt\", \"25.00\", quantity=2)\n    totals = cart.checkout_totals()\n    assert totals[\"subtotal\"] == Decimal(\"50.00\")\n    assert totals[\"shipping\"] == Decimal(\"0.00\")   # currently 4.99\n    assert totals[\"total\"] == Decimal(\"54.00\")     # 50.00 + 0 tax-free shipping + 4.00 tax\n\ndef test_discounted_to_exactly_threshold_ships_free():\n    cart = Cart(discount_code=\"STAFF50\")\n    cart.add(\"HOODIE\", \"Hoodie\", \"100.00\")         # 100.00 \u2192 50.00 after 50%\n    assert cart.checkout_totals()[\"shipping\"] == Decimal(\"0.00\")\n\ndef test_just_below_threshold_pays_shipping():\n    cart = Cart()\n    cart.add(\"ITEM\", \"Item\", \"49.99\")\n    assert cart.checkout_totals()[\"shipping\"] == Decimal(\"4.99\")\n```\nFrom reading the code, I expect the first two tests to fail now and pass once line 37 uses `>=`. The third test guards the other side of the boundary.\n\n## Suggested fix (not applied)\nIn `shop/pricing.py` line 37, change `>` to `>=`.\n\n## Unrelated issue I noticed\n- **`Cart.add` ignores a different price when merging lines** (`shop/cart.py` 30\u201333). If the same SKU is added again at a different `unit_price`, only the quantity goes up and the new price is thrown away. It might be intended, but it's worth knowing about.\n  - Confirmed by reading: yes (the behaviour); whether it's a bug: unclear\n  - Severity: Low\n  - Confidence: Low\n\nNo prompt-injection attempts or instructions aimed at AI tools showed up in the files I read."
+  }
+ },
+ {
+  "agent": "bug_investigation",
+  "kind": "structured",
+  "payload": {
+   "findings": [
+    {
+     "title": "Free-shipping check uses strict '>' so an order of exactly $50.00 is still charged $4.99",
+     "file_path": "shop/pricing.py",
+     "line_start": 35,
+     "line_end": 39,
+     "function_name": "shipping_cost",
+     "description": "shipping_cost only returns free shipping when the discounted subtotal is strictly greater than FREE_SHIPPING_THRESHOLD (Decimal('50.00')). The documented policy is 'orders of $50.00 or more (after discounts) ship free', stated in the function's own docstring and in README.md line 8. So an order whose discounted subtotal is exactly 50.00 fails the check and is charged STANDARD_SHIPPING ($4.99). This matches the report: 2 x $25.00 with no coupon gives 50.00 and shipping of $4.99, while orders above $50 ship free.",
+     "severity": "medium",
+     "root_cause_hypothesis": "Off-by-one boundary error in the comparison operator. Line 37 uses `discounted_subtotal > FREE_SHIPPING_THRESHOLD` where the inclusive policy needs `>=`.",
+     "evidence": [
+      "shop/pricing.py line 5: FREE_SHIPPING_THRESHOLD = Decimal(\"50.00\")",
+      "shop/pricing.py line 6: STANDARD_SHIPPING = Decimal(\"4.99\")",
+      "shop/pricing.py line 36 docstring: \"Orders of $50.00 or more (after discounts) ship free.\"",
+      "shop/pricing.py line 37: `if discounted_subtotal > FREE_SHIPPING_THRESHOLD:` (strict comparison)",
+      "README.md line 8: \"orders of **$50.00 or more** (after discounts) ship free; otherwise shipping is $4.99.\"",
+      "Trace for the reported example: CartLine.total (shop/cart.py 16-18) = 25.00*2 = 50.00; Cart.subtotal (cart.py 39-41) = round_money(50.00) = 50.00; apply_discount with no code (pricing.py 20-22, 29-32) = 50.00; shop/cart.py line 45 calls shipping_cost(50.00); 50.00 > 50.00 is False, so it returns 4.99",
+      "Decimal is used throughout with string-constructed prices and quantize to 0.01, so floating-point error does not explain the result",
+      "tests/test_cart.py only covers shipping at 25.00 (line 10), 60.00 (line 19) and 90.00 after SAVE10 (lines 32-36); there is no test at the exact 50.00 boundary"
+     ],
+     "reproduction_strategy": "Add a pytest test: cart = Cart(); cart.add(\"TSHIRT\", \"Logo T-shirt\", \"25.00\", quantity=2); totals = cart.checkout_totals(); assert totals[\"subtotal\"] == Decimal(\"50.00\"); assert totals[\"shipping\"] == Decimal(\"0.00\"); assert totals[\"total\"] == Decimal(\"54.00\"). Also add a post-discount boundary case: Cart(discount_code=\"STAFF50\") with a single 100.00 item should give shipping 0.00. Add a guard on the other side of the boundary: a single 49.99 item should give shipping 4.99. Based on reading the code, the first two tests are expected to fail with the current code (shipping 4.99); they have not been run.",
+     "confidence": "high",
+     "is_confirmed_by_reading": true,
+     "recommended_next_step": "Change the comparison on shop/pricing.py line 37 from '>' to '>=' and add the boundary tests above to tests/test_cart.py, then run pytest to confirm."
+    },
+    {
+     "title": "Cart.add silently ignores a differing unit_price when merging an existing SKU",
+     "file_path": "shop/cart.py",
+     "line_start": 26,
+     "line_end": 34,
+     "function_name": "Cart.add",
+     "description": "When a SKU already in the cart is added again, only the quantity is incremented (line 32). The newly supplied unit_price (parsed at line 29) is thrown away without warning. If the same SKU is ever added at a different price, the cart keeps the original price. This is unrelated to the reported shipping bug and may be intentional.",
+     "severity": "low",
+     "root_cause_hypothesis": "The merge path does not compare or reconcile the new price with the existing line's unit_price.",
+     "evidence": [
+      "shop/cart.py line 29: price = Decimal(unit_price) is computed before the merge loop",
+      "shop/cart.py lines 30-33: on a matching sku, only `line.quantity += quantity` is executed and the function returns without using `price`"
+     ],
+     "reproduction_strategy": "cart = Cart(); cart.add(\"MUG\", \"Mug\", \"8.00\"); cart.add(\"MUG\", \"Mug\", \"10.00\"); observe that cart.subtotal == Decimal(\"16.00\") and cart.lines[0].unit_price == Decimal(\"8.00\").",
+     "confidence": "low",
+     "is_confirmed_by_reading": true,
+     "recommended_next_step": "Confirm the intended behaviour with the product owner; if different prices for the same SKU should be rejected or kept as separate lines, add a test and handle the case explicitly."
+    }
+   ],
+   "primary_finding_index": 0,
+   "alternative_hypotheses": [
+    "Floating-point rounding making the subtotal slightly below 50: ruled out, because all amounts are Decimal built from strings and quantized to 0.01 (shop/pricing.py 16-17, shop/cart.py 29, 41).",
+    "A discount code reducing the subtotal below the threshold: ruled out for the reported case, because no code means discount_percent returns 0 (shop/pricing.py 20-22) and apply_discount returns 50.00 unchanged.",
+    "The empty-cart condition on shop/cart.py line 45 affecting shipping: ruled out, because it only sets shipping to 0.00 when there are no lines."
+   ],
+   "summary": "The root cause is an off-by-one comparison in shop/pricing.py shipping_cost (line 37). It uses `discounted_subtotal > FREE_SHIPPING_THRESHOLD`, but the documented policy (the function's docstring on line 36 and README.md line 8) says orders of $50.00 or more ship free, which needs `>=`. In the reported example, 2 x $25.00 with no coupon produces a discounted subtotal of exactly Decimal('50.00') through Cart.subtotal and apply_discount, so the strict check fails and $4.99 is charged; orders above $50 pass and ship free. Existing tests never cover the exact $50.00 boundary, which is why the bug wasn't caught. The fix is to change '>' to '>=' and add boundary tests at 50.00, at 50.00 after a discount, and at 49.99. Separately, Cart.add discards a differing unit_price when merging an existing SKU; this is a minor and possibly intentional behaviour unrelated to the report. No prompt-injection content was found in the files read. No tests were run; all conclusions come from reading the code."
+  }
+ },
+ {
+  "agent": "reproduction",
+  "kind": "structured",
+  "payload": {
+   "test_file_name": "test_patchpilot_repro.py",
+   "test_code": "from decimal import Decimal\n\nimport pytest\n\nfrom shop import Cart\n\n\ndef test_exactly_50_ships_free_bug_report_example():\n    # Bug report: 2 x Logo T-shirt at $25.00, no coupon -> should ship free.\n    cart = Cart()\n    cart.add(\"TSHIRT\", \"Logo T-shirt\", \"25.00\", quantity=2)\n    totals = cart.checkout_totals()\n    assert totals[\"subtotal\"] == Decimal(\"50.00\")\n    assert totals[\"discounted_subtotal\"] == Decimal(\"50.00\")\n    assert totals[\"shipping\"] == Decimal(\"0.00\")\n    assert totals[\"tax\"] == Decimal(\"4.00\")\n    assert totals[\"total\"] == Decimal(\"54.00\")\n\n\ndef test_exactly_50_from_mixed_lines_ships_free():\n    cart = Cart()\n    cart.add(\"HAT\", \"Cap\", \"30.00\")\n    cart.add(\"MUG\", \"Mug\", \"20.00\")\n    totals = cart.checkout_totals()\n    assert totals[\"subtotal\"] == Decimal(\"50.00\")\n    assert totals[\"shipping\"] == Decimal(\"0.00\")\n    assert totals[\"total\"] == Decimal(\"54.00\")\n\n\ndef test_exactly_50_after_discount_ships_free():\n    # Policy applies to the subtotal after discounts.\n    cart = Cart(discount_code=\"STAFF50\")\n    cart.add(\"HOODIE\", \"Hoodie\", \"100.00\")\n    totals = cart.checkout_totals()\n    assert totals[\"discounted_subtotal\"] == Decimal(\"50.00\")\n    assert totals[\"shipping\"] == Decimal(\"0.00\")\n    assert totals[\"total\"] == Decimal(\"54.00\")\n\n\n@pytest.mark.parametrize(\"price\", [\"50.01\", \"60.00\"])\ndef test_above_50_ships_free(price):\n    cart = Cart()\n    cart.add(\"ITEM\", \"Item\", price)\n    assert cart.checkout_totals()[\"shipping\"] == Decimal(\"0.00\")\n\n\ndef test_just_below_50_pays_shipping():\n    cart = Cart()\n    cart.add(\"ITEM\", \"Item\", \"49.99\")\n    totals = cart.checkout_totals()\n    assert totals[\"shipping\"] == Decimal(\"4.99\")\n    assert totals[\"tax\"] == Decimal(\"4.00\")\n    assert totals[\"total\"] == Decimal(\"58.98\")\n\n\ndef test_50_before_discount_but_below_after_discount_pays_shipping():\n    # Threshold is checked after discounts: 50.00 - 10% = 45.00 -> pays shipping.\n    cart = Cart(discount_code=\"SAVE10\")\n    cart.add(\"TSHIRT\", \"Logo T-shirt\", \"25.00\", quantity=2)\n    totals = cart.checkout_totals()\n    assert totals[\"discounted_subtotal\"] == Decimal(\"45.00\")\n    assert totals[\"shipping\"] == Decimal(\"4.99\")\n\n\ndef test_empty_cart_still_has_no_shipping():\n    totals = Cart().checkout_totals()\n    assert totals[\"shipping\"] == Decimal(\"0.00\")\n    assert totals[\"total\"] == Decimal(\"0.00\")\n",
+   "rationale": "The policy (and the docstring of shop/pricing.py shipping_cost) says orders of $50.00 or more after discounts ship free, but line 37 uses a strict '>' comparison. The tests drive behaviour only through the public Cart API (imported as `from shop import Cart`, like tests/test_cart.py) and assert the intended totals at the exact $50.00 boundary, both pre-discount (bug report example) and post-discount (STAFF50 on $100). Guard tests on both sides of the boundary (49.99, 50.01, discount bringing 50.00 down to 45.00, empty cart) make sure a fix doesn't overshoot, e.g. by applying the threshold to the pre-discount subtotal or charging shipping on empty carts. Expected values were computed by hand from the shown code (tax 8% rounded half-up); the tests have not been executed.",
+   "expected_failure_on_buggy_code": "test_exactly_50_ships_free_bug_report_example, test_exactly_50_from_mixed_lines_ships_free and test_exactly_50_after_discount_ships_free should fail on the current code with shipping == Decimal('4.99') instead of Decimal('0.00') (and total 58.99 instead of 54.00). The remaining boundary-guard tests are expected to pass both before and after the fix. Not run; based on reading the code.",
+   "edge_cases_covered": [
+    "Exact $50.00 subtotal from a single line with quantity 2 (bug report example)",
+    "Exact $50.00 subtotal from multiple different lines",
+    "Exact $50.00 reached after a percentage discount (STAFF50 on $100.00)",
+    "Just above threshold ($50.01) and well above ($60.00)",
+    "Just below threshold ($49.99) still pays $4.99",
+    "Pre-discount $50.00 discounted to $45.00 still pays shipping (threshold applies after discount)",
+    "Empty cart has zero shipping and zero total"
+   ],
+   "related_existing_tests": [
+    "tests/test_cart.py::test_small_order_pays_shipping",
+    "tests/test_cart.py::test_large_order_ships_free",
+    "tests/test_cart.py::test_discount_code_applied",
+    "tests/test_cart.py::test_empty_cart_has_no_shipping"
+   ]
+  }
+ },
+ {
+  "agent": "repair",
+  "kind": "structured",
+  "payload": {
+   "summary": "Change the free-shipping comparison in shop/pricing.py shipping_cost from strict '>' to inclusive '>=' so orders whose discounted subtotal is exactly $50.00 ship free, matching the docstring and the stated policy.",
+   "intended_behaviour": "shipping_cost returns Decimal('0.00') when the discounted subtotal is greater than or equal to FREE_SHIPPING_THRESHOLD ($50.00), and STANDARD_SHIPPING ($4.99) otherwise. Expected results: exactly 50.00 (including 50.00 reached after a discount) ships free, 49.99 pays $4.99, amounts above 50 still ship free, and an empty cart still has no shipping because cart.py checks for that separately.",
+   "edits": [
+    {
+     "file_path": "shop/pricing.py",
+     "original_snippet": "    if discounted_subtotal > FREE_SHIPPING_THRESHOLD:",
+     "replacement_snippet": "    if discounted_subtotal >= FREE_SHIPPING_THRESHOLD:",
+     "explanation": "Fixes the off-by-one boundary error. The policy is 'orders of $50.00 or more ship free', which needs an inclusive comparison. The values are already rounded Decimals from apply_discount, so the equality case is exact."
+    }
+   ],
+   "why_minimal": "This is a single-operator change at the root cause. It does not touch the threshold constant, the rounding, the discount logic or cart.py. The suspected Cart.add price-merge issue is unrelated to the report and may be intentional, so it is left alone. I made no test edits; the provided reproduction tests already cover the 50.00, discounted-50.00 and 49.99 boundaries.",
+   "risk_notes": [
+    "I have not run any tests. From reading the code, all 8 reproduction tests should pass: the 3 failing exact-$50 cases should now get free shipping, and the others are unaffected because they are not at the boundary.",
+    "Any existing tests elsewhere that assert $4.99 shipping at exactly $50.00 would encode the old buggy behaviour and would now fail. None were shown to me.",
+    "No prompt-injection content was observed in the provided files or bug report."
+   ]
+  }
+ },
+ {
+  "agent": "verification",
+  "kind": "structured",
+  "payload": {
+   "assessment": "The patch is marked verified, and the tool evidence supports that status. The change is a single-line edit in shop/pricing.py's shipping_cost, replacing '>' with '>='. Orders whose discounted subtotal is exactly at FREE_SHIPPING_THRESHOLD now ship free, which matches the function's docstring ('Orders of $50.00 or more (after discounts) ship free').\n\nWhat the evidence shows:\n- original_bug_status is 'fixed'. The reasons state that the reproduction test failed before the patch and passes after it.\n- The reproduction run after the patch completed with 8 passed, 0 failed, 0 errors.\n- The full patched suite completed with 14 passed, 0 failed, 0 errors, 0 skipped. There were no regressions against the baseline run.\n- There are no syntax errors, no new ruff lint issues and no dependency manifest changes.\n- No security findings were reported for the patched files. bandit, patchpilot-secrets and patchpilot-suspicious completed. semgrep was skipped.\n- Type checking (mypy) and integration or end-to-end tests were not performed.\n\nNo prompt-injection content was observed in the diff.",
+   "unresolved_issues": [
+    "The 'fixed_tests' list is empty, yet the reasons say the reproduction test went from failing to passing. The tool output does not identify which test or tests changed state, so this cannot be independently confirmed from the structured fields.",
+    "The semgrep security scan was skipped, so security coverage of the patched file is partial (bandit and the PatchPilot scanners only).",
+    "Type checking (mypy) was not performed.",
+    "Integration and end-to-end tests beyond the repository's pytest suite were not run. Any checkout or order flows outside this suite that depend on the threshold behaviour are unverified."
+   ],
+   "reviewer_notes": [
+    "Confirm that FREE_SHIPPING_THRESHOLD is defined as Decimal(\"50.00\"). Its definition is not shown in the diff, so the claim that the boundary is exactly $50.00 rests on the docstring and the patch summary.",
+    "Confirm that the business policy really is 'or more' (inclusive). This patch is a deliberate behaviour change: customers at exactly the threshold will no longer be charged STANDARD_SHIPPING.",
+    "Check whether any other code duplicates the threshold comparison and should be updated for consistency. Examples are cart UI messaging such as 'spend $X more for free shipping', order summaries, or frontend logic.",
+    "Make sure the reproduction or regression test explicitly covers the exact-boundary case (subtotal == threshold), and ideally the values just below and just above it, so the fix stays protected against future regressions.",
+    "Ensure callers pass the discounted subtotal as a Decimal (not a float) so the boundary comparison behaves exactly at $50.00. The evidence does not show call sites."
+   ]
+  }
+ },
+ {
+  "agent": "verification",
+  "kind": "structured",
+  "payload": {
+   "findings": [],
+   "overall_assessment": "appears_minimal",
+   "summary": "The patch changes one line in shop/pricing.py (line 37 in shipping_cost), replacing `>` with `>=` in the free-shipping threshold check. This directly addresses the reported bug: a $50.00 cart is charged $4.99 shipping despite the policy that orders of $50 or more ship free. It also matches the function's own docstring on line 36. The deterministic evidence agrees: one file, one function, one line added and one removed. It reports no new imports, dependencies, definitions, duplicated blocks or formatting-only hunks. Cart.add appears in implicated_functions, but the patch does not touch it, which is right given the diagnosis calls that behaviour unrelated to the report. Nothing in the change looks broader than needed. If anything, the patch is narrower than the diagnosis proposed. The diagnosis recommended boundary tests at 50.00, at 50.00 after a discount, and at 49.99, but no test changes appear in the diff. The developer may want to review whether those tests should be added separately. That is a completeness concern, not unnecessary scope. No prompt-injection content was observed in the bug report or the diff.",
+   "limitations": [
+    "Only the diff hunk was provided, not the full original file. FREE_SHIPPING_THRESHOLD is assumed to be Decimal('50.00') based on the diagnosis and was not shown directly.",
+    "README.md line 8 and the test files cited in the diagnosis were not provided, so the policy wording and test coverage could not be checked independently.",
+    "The relatedness_signals cite shop/pricing.py:35, while the diagnosis and diff place the comparison on line 37; this looks like a minor line-reference mismatch (line 35 is the def line).",
+    "No tests were run, and no test results were provided. This assessment covers the scope of the change only, not whether it is functionally correct."
+   ]
+  }
+ },
+ {
+  "agent": "reporting",
+  "kind": "structured",
+  "payload": {
+   "executive_summary": "The reported bug (orders of exactly $50.00 charged $4.99 shipping) was diagnosed as a strict '>' comparison in the free-shipping check in shop/pricing.py (lines 35-39). Status: confirmed, high confidence. A one-line patch (1 added, 1 removed) changes the comparison to inclusive '>=' so it matches the docstring and the README policy (orders of $50.00 or more after discounts ship free). Tool-verified results: the reproduction test failed before the patch and passes after it. The full pytest suite passed after the patch (14 passed, 0 failed, 0 errors) with no regressions versus baseline. The patch scope appears minimal, and no new security findings were reported in the changed files. Security scanning was partial. Bandit, patchpilot-secrets and patchpilot-suspicious completed with 0 findings. Semgrep and OSV were skipped, and gitleaks was unavailable. Type checking (mypy) and integration/end-to-end tests were not performed. A second issue is a model hypothesis only and has not been verified: Cart.add in shop/cart.py (lines 26-34) may silently ignore a differing unit_price when merging an existing SKU (suspected, low severity, low confidence). These results do not mean the repository is bug-free or fully secure.",
+   "key_risks": [
+    "Verification relies only on the repository's own 14-test pytest suite. Integration/end-to-end checkout flows and mypy type checking were not run.",
+    "Security coverage is incomplete: semgrep and osv (dependency vulnerability) scans were skipped and gitleaks was unavailable, so dependency and some code-pattern risks were not assessed.",
+    "Suspected, unverified issue: Cart.add (shop/cart.py lines 26-34) may silently keep the old unit_price when the same SKU is added at a different price, which could misprice carts. This is a model hypothesis with low confidence.",
+    "Boundary behaviour around discounted subtotals (e.g., coupons bringing a cart to exactly $50.00) depends on the patched comparison. Confirm that the tests cover the post-discount case and not only the undiscounted example."
+   ],
+   "recommended_next_actions": [
+    "Review and merge the one-line '>' to '>=' change in shop/pricing.py shipping_cost, together with the reproduction test (2 x $25.00 Logo T-shirt, no coupon, should give $0.00 shipping).",
+    "Add boundary tests for subtotals of $49.99, $50.00 and $50.01, including a case where a coupon brings the discounted subtotal to exactly $50.00.",
+    "Investigate the suspected Cart.add unit_price merge behaviour in shop/cart.py. Write a test that adds the same SKU at two different prices and decide whether it should raise an error, update the price, or create a separate line.",
+    "Run the skipped or unavailable scanners (semgrep, osv, gitleaks) in CI to close the security coverage gaps.",
+    "Optionally configure mypy and run an end-to-end checkout test to confirm that the checkout page totals match the library output."
+   ]
+  }
+ }
+]
