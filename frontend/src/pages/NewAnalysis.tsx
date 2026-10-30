@@ -50,8 +50,8 @@ function SourcePicker({ value, onChange, label, optional }: { value: Source; onC
         {optional && <Badge tone="neutral">optional</Badge>}
         <span className="spacer" />
         <div className="segmented" role="tablist" aria-label={`${label} source`}>
-          <button role="tab" aria-selected={value.mode === "zip"} className={value.mode === "zip" ? "on" : ""} onClick={() => onChange({ ...value, mode: "zip" })}><Icon name="upload" size={14} /> Upload ZIP</button>
           <button role="tab" aria-selected={value.mode === "url"} className={value.mode === "url" ? "on" : ""} onClick={() => onChange({ ...value, mode: "url" })}><Icon name="git" size={14} /> GitHub URL</button>
+          <button role="tab" aria-selected={value.mode === "zip"} className={value.mode === "zip" ? "on" : ""} onClick={() => onChange({ ...value, mode: "zip" })}><Icon name="upload" size={14} /> Upload ZIP</button>
         </div>
       </div>
       {value.mode === "zip" ? (
@@ -76,8 +76,8 @@ const ready = (s: Source) => (s.mode === "zip" ? !!s.file : GH_RE.test(s.url.tri
 
 export function NewAnalysis({ health }: { health: Health | null }) {
   const [type, setType] = useState<AnalysisType>("full_analysis");
-  const [repo, setRepo] = useState<Source>({ mode: "zip", file: null, url: "" });
-  const [modified, setModified] = useState<Source>({ mode: "zip", file: null, url: "" });
+  const [repo, setRepo] = useState<Source>({ mode: "url", file: null, url: "" });
+  const [modified, setModified] = useState<Source>({ mode: "url", file: null, url: "" });
   const [name, setName] = useState("");
   const [bug, setBug] = useState("");
   const [allowLocal, setAllowLocal] = useState(false);
@@ -147,7 +147,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
       <div className="page-head">
         <div>
           <h1>New analysis</h1>
-          <p>Upload a ZIP or paste a GitHub URL. The repository is extracted into an isolated workspace; the original is never modified — patches go to disposable copies only.</p>
+          <p>Paste a GitHub URL or upload a ZIP. The repository is extracted into an isolated workspace; the original is never modified — patches go to disposable copies only.</p>
         </div>
       </div>
 
@@ -159,8 +159,14 @@ export function NewAnalysis({ health }: { health: Health | null }) {
 
       <div className="grid new-layout" style={{ gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", alignItems: "start" }}>
         <div className="stack">
-          <div className="card">
-            <div className="card-head"><span className="step-num">1</span><h2>Choose analysis type</h2></div>
+          <div className="card stack">
+            <div className="card-head" style={{ marginBottom: 0 }}><span className="step-num">1</span><h2>Add repository</h2></div>
+            {sampleNote && <div className="alert info">{sampleNote}</div>}
+            <SourcePicker value={repo} onChange={(v) => { setRepo(v); setSampleNote(""); setName(""); }} label={type === "patch_review" ? "Original version" : "Repository"} />
+          </div>
+
+          <div className="card stack">
+            <div className="card-head" style={{ marginBottom: 0 }}><span className="step-num">2</span><h2>Choose analysis type</h2></div>
             <button className={`type-card featured ${type === full.id ? "selected" : ""}`} onClick={() => setType(full.id)}>
               <span className="tc-icon"><Icon name={full.icon} size={21} /></span>
               <span style={{ flex: 1 }}>
@@ -171,19 +177,13 @@ export function NewAnalysis({ health }: { health: Health | null }) {
                 </span>
               </span>
             </button>
-            <div className="grid grid-2" style={{ marginTop: 12 }}>
+            <div className="grid grid-2">
               {TYPES.slice(1).map((t) => (
                 <button key={t.id} className={`type-card ${type === t.id ? "selected" : ""}`} onClick={() => setType(t.id)}>
                   <span className="tc-icon"><Icon name={t.icon} size={19} /></span><span><span className="t">{t.title}</span><span className="d">{t.desc}</span></span>
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="card stack">
-            <div className="card-head" style={{ marginBottom: 0 }}><span className="step-num">2</span><h2>Add repository</h2></div>
-            {sampleNote && <div className="alert info">{sampleNote}</div>}
-            <SourcePicker value={repo} onChange={(v) => { setRepo(v); setSampleNote(""); setName(""); }} label={type === "patch_review" ? "Original version" : "Repository"} />
             {showModified && (
               <>
                 <div className="divider" style={{ margin: "4px 0" }} />
