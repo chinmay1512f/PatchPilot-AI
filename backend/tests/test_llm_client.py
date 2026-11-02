@@ -61,9 +61,10 @@ def test_structured_success_tracks_usage_and_sends_fallback(settings):
     client = LLMClient(settings, on_usage=lambda *a: calls.append(a), sdk_client=fake)
     out = client.structured(agent="repair", system="s", messages="hi", output_model=Out)
     assert out.answer == "x"
-    assert calls == [("repair", 100, 20, 0, False)]
+    assert calls == [("repair", 100, 20, 0, False, 0)]
     kw = msgs.parse_calls[0]
     assert kw["model"] == "claude-opus-5-5" and kw["output_format"] is Out
+    assert kw["cache_control"] == {"type": "ephemeral"}  # prompt caching on by default
     assert kw["fallbacks"] == "default" and kw["output_config"]["effort"] == "high"
     assert kw["speed"] == "fast" and set(kw["betas"]) == {"server-side-fallback-2026-07-01", "fast-mode-2026-02-01"}
     assert "untrusted_repository_content" in kw["system"]  # security preamble always present
@@ -145,6 +146,32 @@ def test_tool_loop_turn_limit(settings):
     tools = [ToolSpec("read_file", "read", {"type": "object"}, lambda a: "x")]
     res = LLMClient(settings, sdk_client=fake).tool_loop(agent="a", system="s", user="u", tools=tools, max_turns=3)
     assert len(msgs.create_calls) == 3 and len(res.tool_calls) == 3
+
+
+def test_tool_loop_wraps_up_before_exhausting_the_job_budget(settings):
+    """A long investigation stops reading and answers instead of being cut off by the hard budget."""
+    settings.job_token_budget = 1000  # loop share 35% = 350 tokens
+    call = SimpleNamespace(type="tool_use", id="t", name="read_file", input={"path": "a"})
+    fake, msgs = sdk(create_responses=[SimpleNamespace(stop_reason="tool_use", content=[call], usage=usage(200, 10)) for _ in range(10)])
+    tools = [ToolSpec("read_file", "read", {"type": "object"}, lambda a: "x")]
+    client = LLMClient(settings, sdk_client=fake)
+    res = client.tool_loop(agent="a", system="s", user="u", tools=tools, max_turns=10)
+    assert res.stopped_early == "budget" and len(msgs.create_calls) == 2  # 210 + 210 >= 350
+    assert res.messages[-1]["role"] == "user"  # ends with tool results, ready for the final answer
+    assert client.tokens_used <= settings.job_token_budget  # the final structured call can still run
+
+
+def test_cached_tokens_count_at_a_tenth_and_writes_are_priced():
+    from app.llm.client import estimate_cost
+    settings_like = SimpleNamespace(job_token_budget=10_000)
+    client = LLMClient.__new__(LLMClient)
+    client.s, client.on_usage, client.tokens_used = settings_like, None, 0
+    import threading
+    client._lock = threading.Lock()
+    client._account("a", SimpleNamespace(input_tokens=100, output_tokens=50, cache_read_input_tokens=5000, cache_creation_input_tokens=1000))
+    assert client.tokens_used == 100 + 1000 + 50 + 500
+    base = estimate_cost("claude-opus-5-5", 1100, 50, 5000)
+    assert estimate_cost("claude-opus-5-5", 1100, 50, 5000, cache_write=1000) == round(base + 1000 * 4.0 * 0.25 / 1_000_000, 4)
 
 
 def test_untrusted_wrapper_cannot_be_closed_early():

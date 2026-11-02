@@ -91,7 +91,7 @@ class Orchestrator:
         self.store.add_audit(job_id, kind, message, agent)
 
     def _usage_cb(self, job_id: str):
-        def cb(agent: str, inp: int, out: int, cache: int, fast: bool = False) -> None:
+        def cb(agent: str, inp: int, out: int, cache: int, fast: bool = False, cache_write: int = 0) -> None:
             def mut(j: Job) -> None:
                 a = j.agents.get(agent)
                 if a:
@@ -104,7 +104,7 @@ class Orchestrator:
                 j.usage.llm_calls += 1
                 j.usage.fast_calls += int(fast)
                 # per-call so fast-mode calls are priced at their own (2x) rate
-                j.usage.estimated_cost_usd = round(j.usage.estimated_cost_usd + estimate_cost(j.model, inp, out, cache, fast), 4)
+                j.usage.estimated_cost_usd = round(j.usage.estimated_cost_usd + estimate_cost(j.model, inp, out, cache, fast, cache_write), 4)
             self.store.update(job_id, mut)
         return cb
 

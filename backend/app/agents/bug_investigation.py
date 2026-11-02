@@ -86,7 +86,12 @@ def run(ctx: AgentContext, bug_description: str, repo: RepoSummary | None) -> Di
         turns = ctx.settings.max_investigation_tool_turns
     loop = ctx.llm.tool_loop(agent="bug_investigation", system=system, user=user, tools=tools, max_turns=turns, effort="high")
     ctx.log("bug_investigation", f"{'audit' if discovery else 'investigation'}: {len(loop.tool_calls)} read-only tool calls; files read: {sorted(set(files_read))[:10]}")
-    final_msgs = with_user_turn(loop.messages, "Now return the final structured diagnosis. Use only locations you read.")
+    wrap = "Now return the final structured diagnosis. Use only locations you read."
+    if getattr(loop, "stopped_early", "") == "budget":
+        ctx.log("bug_investigation", "investigation wrapped up early to stay within the job's token budget; the diagnosis is based on the files read so far")
+        wrap = ("The reading budget for this investigation is used up. Do not request more files. " + wrap
+                + " If the evidence is incomplete, say so and lower your confidence accordingly.")
+    final_msgs = with_user_turn(loop.messages, wrap)
     draft = ctx.llm.structured(agent="bug_investigation", system=system, messages=final_msgs, output_model=DiagnosisDraft, effort="high", tools=tools)
     diagnosis = validate(ctx, draft, files_read, len(loop.tool_calls))
     if discovery:

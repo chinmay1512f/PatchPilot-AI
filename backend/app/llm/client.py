@@ -87,11 +87,13 @@ class ToolLoopResult:
     messages: list[dict]
     tool_calls: list[dict] = field(default_factory=list)
     final_text: str = ""
+    stopped_early: str = ""  # why the loop ended before the model finished on its own ("budget")
 
 
 FAST_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"}  # fast mode (research preview), Claude API only
 
-UsageCallback = Callable[..., None]  # (agent, input_tokens, output_tokens, cache_read_tokens, fast)
+# (agent, input_tokens incl. cache writes, output_tokens, cache_read_tokens, fast, cache_write_tokens)
+UsageCallback = Callable[..., None]
 
 
 class LLMClient:
@@ -140,15 +142,25 @@ class LLMClient:
         inp = int(getattr(usage, "input_tokens", 0) or 0)
         out = int(getattr(usage, "output_tokens", 0) or 0)
         cache = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        write = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
         fast = getattr(usage, "speed", None) == "fast"
         with self._lock:
-            self.tokens_used += inp + out + cache
+            # Billing-weighted: a cache read costs ~10% of a normal input token.
+            self.tokens_used += inp + write + out + cache // 10
         if self.on_usage:
-            self.on_usage(agent, inp, out, cache, fast)
+            self.on_usage(agent, inp + write, out, cache, fast, write)
 
     def _check_budget(self) -> None:
         if self.tokens_used > self.s.job_token_budget:
             raise LLMBudgetExceeded(f"Job token budget of {self.s.job_token_budget:,} tokens exhausted; remaining AI stages were stopped.")
+
+    def _should_wrap_up(self, loop_start: int) -> bool:
+        """Stop a tool loop early (the agent then answers from what it already read) instead of
+        letting one investigation consume the budget that later stages need."""
+        budget = self.s.job_token_budget
+        spent_here = self.tokens_used - loop_start
+        left = budget - self.tokens_used
+        return spent_here >= budget * self.s.tool_loop_budget_share or left < budget * self.s.tool_loop_reserve_share
 
     def _common(self, effort: str | None) -> dict:
         kw: dict = {"model": self.model, "max_tokens": self.s.max_output_tokens, "output_config": {"effort": effort or self.s.effort}}
@@ -161,6 +173,10 @@ class LLMClient:
             kw["speed"] = "fast"
         if betas:
             kw["betas"] = betas
+        if self.s.prompt_caching:
+            # Automatic caching: marks the last cacheable block, so each tool-loop turn re-reads the
+            # previous turns from cache instead of paying for them again.
+            kw["cache_control"] = {"type": "ephemeral"}
         return kw
 
     def _call(self, fn: Callable[[], Any]) -> Any:
@@ -308,8 +324,12 @@ class LLMClient:
             return result
         client = self._client()
         api_tools = [t.to_api() for t in tools]
+        loop_start = self.tokens_used
         for turn in range(max_turns):
             self._check_budget()
+            if turn > 0 and self._should_wrap_up(loop_start):
+                result.stopped_early = "budget"  # messages end with our tool results; the caller asks for the answer
+                break
             resp = self._call(lambda: client.beta.messages.create(system=SECURITY_PREAMBLE + "\n" + system, messages=result.messages, tools=api_tools, **self._common(effort)))
             self._account(agent, getattr(resp, "usage", None))
             self._check_refusal(resp)
@@ -350,8 +370,10 @@ def with_user_turn(messages: list[dict], text: str) -> list[dict]:
     return msgs
 
 
-def estimate_cost(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, fast: bool = False) -> float:
+def estimate_cost(model: str, input_tokens: int, output_tokens: int, cache_read: int = 0, fast: bool = False,
+                  cache_write: int = 0) -> float:
+    """``input_tokens`` includes ``cache_write`` tokens; cache writes cost 1.25x input, cache reads 0.1x."""
     pin, pout = MODEL_PRICES.get(model, (4.0, 20.0))
     if fast:  # fast mode is billed at 2x the standard per-token price
         pin, pout = pin * 2, pout * 2
-    return round((input_tokens * pin + output_tokens * pout + cache_read * pin * 0.1) / 1_000_000, 4)
+    return round((input_tokens * pin + cache_write * pin * 0.25 + output_tokens * pout + cache_read * pin * 0.1) / 1_000_000, 4)

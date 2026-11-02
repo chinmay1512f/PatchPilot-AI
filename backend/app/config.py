@@ -46,7 +46,12 @@ class Settings(BaseSettings):
     # (clearly labelled in the UI; tool execution is still real).
     llm_mode: Literal["live", "record", "replay"] = "live"
     replay_file: str = ""
-    job_token_budget: int = 600_000
+    job_token_budget: int = 600_000  # billing-weighted: cached input counts at a tenth
+    prompt_caching: bool = True  # cache the growing conversation prefix (cache reads cost ~10% of input)
+    # A tool-using investigation wraps up (answers from what it has read) once it has used this share
+    # of the job budget, or when less than tool_loop_reserve_share of the budget is left for later stages.
+    tool_loop_budget_share: float = 0.35
+    tool_loop_reserve_share: float = 0.25
 
     # --- Storage ---
     data_dir: Path = PROJECT_DIR / "data"
