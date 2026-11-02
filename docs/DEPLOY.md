@@ -50,6 +50,14 @@ Any `*.vercel.app` address is already allowed to call the backend (`PATCHPILOT_C
 * The free instance has no persistent disk: analysis history and the usage counters reset when it restarts.
 * 512 MB memory: very large repositories may be slow or fail. Upgrading the Render instance removes the sleep and adds memory.
 
+## GitHub URL downloads
+
+Repositories are fetched through GitHub's plain archive link (the same one as "Download ZIP"), which is not
+counted against the GitHub REST API's 60 requests/hour limit for anonymous clients — shared cloud IPs hit
+that limit quickly. Only if GitHub limits the archive link too does PatchPilot fall back to the API. To make
+that fallback authenticated (5,000 requests/hour), optionally add a **`GITHUB_TOKEN`** environment variable on
+Render: a fine-grained token with *public repositories, read-only* access and no other permissions.
+
 ## Updating
 
 Push to `main` on GitHub — Render and Vercel both redeploy automatically.

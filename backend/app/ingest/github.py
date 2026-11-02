@@ -4,13 +4,14 @@ Safety
 - Only URLs that parse as ``github.com/<owner>/<repo>[/tree/<ref>]`` are accepted; the
   download URL is built by us, never taken from the user, so the server cannot be pointed at
   internal hosts (SSRF).
-- The GitHub API redirect is followed manually and only to ``codeload.github.com``.
+- GitHub's archive redirect is followed manually and only to ``codeload.github.com``.
 - The archive is streamed with a hard size cap, then goes through the same safe extraction as
   uploads. ``git`` is never run: a repository's own git config/hooks can execute commands.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -54,6 +55,50 @@ def parse_github_url(url: str) -> GitHubRepo:
     return GitHubRepo(owner, repo, ref.rstrip("/") if ref else None)
 
 
+_REDIRECTS = (301, 302, 303, 307, 308)
+_RATE_LIMITED = (403, 429)
+
+
+def _not_found(gh: GitHubRepo) -> str:
+    what = f"Branch or tag “{gh.ref}” of {gh.owner}/{gh.repo}" if gh.ref else f"Repository {gh.display}"
+    return f"{what} was not found, or the repository is private (only public repositories are supported)."
+
+
+def _resolve_archive(client: httpx.Client, gh: GitHubRepo) -> str:
+    """Return the codeload.github.com URL of the repository archive.
+
+    First the plain archive link (what "Download ZIP" uses) — it is not counted against the GitHub
+    REST API's 60 requests/hour per IP for anonymous clients, which shared cloud IPs exhaust quickly.
+    Only if GitHub limits that too, fall back to the REST API (authenticated when GITHUB_TOKEN is set).
+    """
+    ua = {"User-Agent": "PatchPilot-AI"}
+    ref = gh.ref or "HEAD"  # HEAD = the repository's default branch
+    attempts = [(f"https://github.com/{gh.owner}/{gh.repo}/archive/{ref}.zip", ua)]
+    api_headers = {**ua, "Accept": "application/vnd.github+json"}
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        api_headers["Authorization"] = f"Bearer {token}"
+    attempts.append((f"https://api.github.com/repos/{gh.owner}/{gh.repo}/zipball" + (f"/{gh.ref}" if gh.ref else ""), api_headers))
+
+    for i, (url, headers) in enumerate(attempts):
+        r = client.get(url, headers=headers, follow_redirects=False)
+        if r.status_code in _RATE_LIMITED and i + 1 < len(attempts):
+            continue
+        if r.status_code == 404:
+            raise GitHubError(_not_found(gh))
+        if r.status_code in _RATE_LIMITED:
+            raise GitHubError("GitHub is temporarily limiting downloads from this server. Please try again in a few minutes, "
+                              "or upload the repository as a ZIP instead.")
+        if r.status_code not in _REDIRECTS:
+            raise GitHubError(f"GitHub returned an unexpected response ({r.status_code}).")
+        location = r.headers.get("location", "")
+        parts = urlsplit(location)
+        if parts.scheme != "https" or parts.hostname not in _ALLOWED_DOWNLOAD_HOSTS:
+            raise GitHubError("GitHub redirected to an unexpected host; download refused.")
+        return location
+    raise GitHubError("Could not download the repository from GitHub.")  # unreachable
+
+
 def download_github_zip(
     url: str,
     dest: Path,
@@ -63,23 +108,13 @@ def download_github_zip(
     timeout: float = 60.0,
 ) -> GitHubRepo:
     gh = parse_github_url(url)
-    api_url = f"https://api.github.com/repos/{gh.owner}/{gh.repo}/zipball" + (f"/{gh.ref}" if gh.ref else "")
-    headers = {"Accept": "application/vnd.github+json", "User-Agent": "PatchPilot-AI"}
     try:
         with (client_factory() if client_factory else httpx.Client(timeout=timeout)) as client:
-            r = client.get(api_url, headers=headers, follow_redirects=False)
-            if r.status_code == 404:
-                raise GitHubError(f"Repository {gh.display} was not found, or it is private (only public repositories are supported).")
-            if r.status_code in (403, 429):
-                raise GitHubError("GitHub rate limit reached for anonymous downloads. Try again later or upload a ZIP instead.")
-            if r.status_code not in (301, 302, 303, 307, 308):
-                raise GitHubError(f"GitHub returned an unexpected response ({r.status_code}).")
-            location = r.headers.get("location", "")
-            parts = urlsplit(location)
-            if parts.scheme != "https" or parts.hostname not in _ALLOWED_DOWNLOAD_HOSTS:
-                raise GitHubError("GitHub redirected to an unexpected host; download refused.")
+            location = _resolve_archive(client, gh)
             size = 0
             with client.stream("GET", location, headers={"User-Agent": "PatchPilot-AI"}, follow_redirects=False) as resp:
+                if resp.status_code == 404:  # github.com redirects even for unknown branches; codeload then 404s
+                    raise GitHubError(_not_found(gh))
                 if resp.status_code != 200:
                     raise GitHubError(f"Archive download failed ({resp.status_code}).")
                 declared = resp.headers.get("content-length")
