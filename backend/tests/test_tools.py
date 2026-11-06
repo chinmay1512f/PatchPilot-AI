@@ -373,6 +373,6 @@ def test_patch_recheck_skips_semgrep_by_default(tmp_path, settings):
     (root / "shop/pricing.py").write_text((root / "shop/pricing.py").read_text() + "\nimport pickle\ndef load(b):\n    return pickle.loads(b)\n")
     settings.disabled_scanners = ""
     ctx = AgentContext("job_0000000004", settings, FakeLLM(), None, build_index(root), BlockedBackend("t"), lambda a, m: None)
-    introduced, status = _patch_scan(ctx, root, {"shop/pricing.py"}, [])
+    introduced, status, resolved = _patch_scan(ctx, root, {"shop/pricing.py"}, [])
     assert any(s.startswith("semgrep: skipped") for s in status)
     assert any(f.rule_id == "B301" for f in introduced)  # Bandit still catches the risky change

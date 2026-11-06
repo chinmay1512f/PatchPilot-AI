@@ -170,7 +170,7 @@ export function Dashboard() {
                   <input type="checkbox" aria-label="Select all finished analyses" checked={deletable.length > 0 && deletable.every((j) => selected.has(j.id))}
                     onChange={(e) => setSelected(e.target.checked ? new Set(deletable.map((j) => j.id)) : new Set())} />
                 </th>
-                <th>Project</th><th>Type</th><th>Status</th><th>Stage</th><th>Bugs</th><th>Security</th><th>Verification</th><th>Created</th><th />
+                <th>Project</th><th>Type</th><th>Status</th><th>Stage</th><th>Bugs</th><th>Security</th><th>Verification</th><th title="PatchPilot Risk Score (own assessment, 0-100; original → after patch)">Risk score</th><th>Created</th><th />
               </tr></thead>
               <tbody>
                 {(jobs ?? []).map((j) => {
@@ -187,6 +187,7 @@ export function Dashboard() {
                     <td>{j.bugs}</td>
                     <td>{j.security_findings}</td>
                     <td>{j.verification_status ? <StatusBadge status={j.verification_status} /> : <span className="muted">—</span>}</td>
+                    <td className="mono" style={{ whiteSpace: "nowrap" }}>{j.risk_score != null ? <>{j.risk_score}{j.risk_score_after != null && j.risk_score_after !== j.risk_score && <> → <strong>{j.risk_score_after}</strong></>}</> : <span className="muted">—</span>}</td>
                     <td className="muted" style={{ whiteSpace: "nowrap" }}>{fmtTime(j.created_at)}</td>
                     <td onClick={(e) => e.stopPropagation()} style={{ textAlign: "right" }}>
                       <button className="icon-btn" title={running ? "Wait for this analysis to finish before deleting it" : "Delete this analysis"}

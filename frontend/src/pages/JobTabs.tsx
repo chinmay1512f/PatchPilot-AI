@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { apiUrl } from "../api";
 import { BarChart } from "../charts";
-import type { Job, PatchScopeReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
+import type { Job, PatchScopeReport, RiskScoreReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
 import {
   Badge, ConfidenceBadge, DiffView, Empty, ExcerptView, FileModal, Icon, Markdown, SeverityBadge, Src, StatusBadge, fmtTime, label,
 } from "../ui";
@@ -74,6 +74,78 @@ function ProofCard({ job }: { job: Job }) {
 
 // --------------------------------------------------------------------------- overview
 
+// --------------------------------------------------------------------------- risk score
+
+const pts = (n: number) => String(Math.round(n * 10) / 10);
+const scoreTone = (s: number) => (s >= 90 ? "var(--ok)" : s >= 75 ? "var(--info)" : s >= 50 ? "var(--warn)" : "var(--bad)");
+
+function ScoreRing({ score, rating, caption }: { score: number; rating: string; caption: string }) {
+  const r = 44, c = 2 * Math.PI * r;
+  return (
+    <div className="score-ring">
+      <svg viewBox="0 0 104 104" width="112" height="112" role="img" aria-label={`${caption}: ${score} out of 100, ${rating}`}>
+        <circle cx="52" cy="52" r={r} fill="none" stroke="var(--border)" strokeWidth="9" />
+        <circle cx="52" cy="52" r={r} fill="none" stroke={scoreTone(score)} strokeWidth="9" strokeLinecap="round"
+          strokeDasharray={`${(c * score) / 100} ${c}`} transform="rotate(-90 52 52)" />
+        <text x="52" y="52" textAnchor="middle" dominantBaseline="central" className="score-num">{score}</text>
+        <text x="52" y="72" textAnchor="middle" className="score-of">/ 100</text>
+      </svg>
+      <div className="score-caption">{caption}</div>
+      <div className="score-rating" style={{ color: scoreTone(score) }}>{rating}</div>
+    </div>
+  );
+}
+
+function RiskScoreCard({ rs }: { rs: RiskScoreReport }) {
+  const after = rs.after ? Object.fromEntries(rs.after.components.map((c) => [c.key, c])) : {};
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>PatchPilot Risk Score</h2><Src kind="tool" /><Badge tone="outline">own assessment · not a certification</Badge>
+      </div>
+      <div className="score-layout">
+        <div className="score-rings">
+          <ScoreRing score={rs.before.score} rating={rs.before.rating} caption="Original code" />
+          {rs.after && (
+            <>
+              <div className="score-arrow" aria-hidden>→</div>
+              <ScoreRing score={rs.after.score} rating={rs.after.rating} caption="After PatchPilot's patch" />
+            </>
+          )}
+        </div>
+        <div className="score-parts">
+          {rs.before.components.map((c) => {
+            const a = after[c.key];
+            const kept = c.assessed ? ((c.max_points - c.deduction) / c.max_points) * 100 : 0;
+            const keptAfter = a && a.assessed ? ((a.max_points - a.deduction) / a.max_points) * 100 : null;
+            return (
+              <div key={c.key} className={`score-part ${c.assessed ? "" : "na"}`}>
+                <div className="row small">
+                  <strong>{c.label}</strong><span className="spacer" />
+                  {c.assessed ? (
+                    <span className="mono" title="points earned out of the maximum (higher is better)">
+                      {pts(c.max_points - c.deduction)}{a && a.assessed && a.deduction !== c.deduction && <> → <strong>{pts(a.max_points - a.deduction)}</strong></>} / {c.max_points}
+                    </span>
+                  ) : <span className="muted">not assessed</span>}
+                </div>
+                <div className="score-bar" title={c.detail}>
+                  <span style={{ width: `${kept}%` }} />
+                  {keptAfter !== null && keptAfter > kept && <span className="after" style={{ left: `${kept}%`, width: `${keptAfter - kept}%` }} />}
+                </div>
+                <div className="small muted">{c.detail}{a && a.detail !== c.detail ? ` After patch: ${a.detail}` : ""}</div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div className="small muted" style={{ marginTop: 10 }}>
+        {rs.method} Based on {rs.before.factors_assessed} of 5 factors; factors that could not be measured are left out rather than counted as passed.
+        {rs.after_note && <> {rs.after_note}</>}
+      </div>
+    </div>
+  );
+}
+
 export function OverviewTab({ job }: { job: Job }) {
   const r = job.results;
   const { setOpen, modal } = useFile(job.id);
@@ -83,6 +155,7 @@ export function OverviewTab({ job }: { job: Job }) {
   return (
     <div className="stack">
       {modal}
+      {r.risk_score && <RiskScoreCard rs={r.risk_score} />}
       <ProofCard job={job} />
       <MalwareCard job={job} compact />
       {r.report && (

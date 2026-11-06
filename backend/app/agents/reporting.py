@@ -85,6 +85,24 @@ def build_markdown(job: Job, report: Report) -> str:
         L += ["> **Note:** AI reasoning in this run was replayed from a recording of an earlier real run. Test execution and scanners ran live.", ""]
     if report.narrative:
         L += ["## Executive summary *(AI-written from the evidence below)*", "", report.narrative.executive_summary, ""]
+    if r.risk_score:
+        rs = r.risk_score
+        head = f"**{rs.before.score}/100 — {rs.before.rating}** (original code, {rs.before.factors_assessed} of 5 factors assessed)"
+        if rs.after:
+            head += f" → **{rs.after.score}/100 — {rs.after.rating}** after PatchPilot's patch"
+        L += ["## PatchPilot Risk Score *(deterministic formula over tool results — no AI)*", "", head, "", f"*{rs.method}*", "",
+              "| Factor | Max | Deduction (original) | " + ("Deduction (after patch) | " if rs.after else "") + "Detail |",
+              "|---|---|---|" + ("---|" if rs.after else "") + "---|"]
+        after = {c.key: c for c in rs.after.components} if rs.after else {}
+        for c in rs.before.components:
+            ded = f"-{c.deduction:g}" if c.assessed else "not assessed"
+            a = after.get(c.key)
+            col = (f" {('-' + format(a.deduction, 'g')) if a.assessed else 'not assessed'} |" if a else "")
+            detail = c.detail + (f" After patch: {a.detail}" if a and a.detail != c.detail else "")
+            L.append(f"| {c.label} | {c.max_points} | {ded} |{col} {detail.replace('|', '/')} |")
+        if rs.after_note:
+            L += ["", rs.after_note]
+        L.append("")
     L += ["## Pipeline stages", "", "| Agent | Status | Notes |", "|---|---|---|"]
     for a in job.agents.values():
         L.append(f"| {a.title} | {a.status} | {a.message.replace('|', '/')[:160]} |")

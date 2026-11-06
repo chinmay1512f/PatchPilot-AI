@@ -99,11 +99,20 @@ export interface Job {
     repo?: RepoSummary; diagnosis?: Diagnosis; reproduction?: Reproduction; patches: PatchProposal[];
     verification?: VerificationResult; verification_history: VerificationResult[]; security?: SecurityReport;
     patch_scope?: PatchScopeReport; supplied_patch_scope?: PatchScopeReport | null; report?: Report;
+    risk_score?: RiskScoreReport | null;
   };
 }
+export interface ScoreComponent {
+  key: "vulnerabilities" | "secrets" | "dependencies" | "code_quality" | "verification";
+  label: string; max_points: number; deduction: number; assessed: boolean; detail: string;
+}
+export interface RiskScore { score: number; rating: string; basis: "original" | "patched"; components: ScoreComponent[]; factors_assessed: number }
+/** Deterministic: computed from tool results by a fixed formula, never by the model. */
+export interface RiskScoreReport { before: RiskScore; after?: RiskScore | null; after_note: string; method: string }
 export interface JobSummary {
   id: string; project_name: string; analysis_type: AnalysisType; status: StageStatus; current_stage?: string; created_at: string;
   updated_at: string; bugs: number; security_findings: number; verification_status?: string; llm_mode: string; source?: string;
+  risk_score?: number | null; risk_score_after?: number | null;
 }
 export interface Stats {
   projects_analyzed: number; jobs_total: number; bugs_identified: number; patches_verified: number; security_findings: number;

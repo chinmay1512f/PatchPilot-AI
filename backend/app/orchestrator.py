@@ -22,6 +22,7 @@ from .config import Settings
 from .core.models import (
     AGENT_ORDER, AGENT_TITLES, AgentRun, AnalysisType, Job, JobOptions, Reproduction, SecurityReport, StageStatus, VerificationStatus, new_id, utcnow,
 )
+from .core import scoring
 from .core.store import JobStore
 from .ingest.indexer import build_index
 from .ingest.workspace import Workspace
@@ -187,6 +188,11 @@ class Orchestrator:
             }[job.analysis_type](ctx, job)
             with self._stage(job_id, "reporting"):
                 current = self.store.get(job_id)
+                try:  # deterministic score from tool results; must never break the report
+                    current.results.risk_score = scoring.compute(current.results)
+                    self._set(job_id, lambda j: setattr(j.results, "risk_score", current.results.risk_score))
+                except Exception as e:  # noqa: BLE001
+                    self._audit(job_id, "reporting", f"risk score not computed: {type(e).__name__}: {e}", "warning")
                 report = reporting.run(ctx, current)
                 self._set(job_id, lambda j: setattr(j.results, "report", report))
             final = self.store.get(job_id)

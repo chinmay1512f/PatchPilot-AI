@@ -413,12 +413,49 @@ class MalwareAssessment(BaseModel):
     limitations: list[str] = Field(default_factory=list)
 
 
+class CodeQualitySummary(BaseModel):
+    """Ruff correctness lint over the repository's Python code (not security findings)."""
+    status: Literal["completed", "unavailable", "failed", "not_applicable"]
+    python_lines: int = 0  # non-test Python source lines, to normalise by size
+    issues: int = 0
+    severe: int = 0  # syntax errors and undefined names
+    top_codes: dict[str, int] = Field(default_factory=dict)
+    message: str = ""
+
+
 class SecurityReport(BaseModel):
     scanners: list[ScannerRun]
     findings: list[SecurityFinding]
     triage_status: str = "not_run"
     triage_summary: str = ""
     malware: MalwareAssessment | None = None
+    code_quality: CodeQualitySummary | None = None
+
+
+class ScoreComponent(BaseModel):
+    key: Literal["vulnerabilities", "secrets", "dependencies", "code_quality", "verification"]
+    label: str
+    max_points: int
+    deduction: float = 0.0
+    assessed: bool = True
+    detail: str = ""
+
+
+class RiskScore(BaseModel):
+    """PatchPilot's own score, computed by a fixed formula from tool results only (no AI)."""
+    score: int
+    rating: str
+    basis: Literal["original", "patched"]
+    components: list[ScoreComponent]
+    factors_assessed: int
+
+
+class RiskScoreReport(BaseModel):
+    before: RiskScore
+    after: RiskScore | None = None
+    after_note: str = ""
+    method: str = ("PatchPilot's own assessment: a fixed formula over scanner and test results (no AI). "
+                   "Not an industry-standard certification, and a high score does not mean the code is secure.")
 
 
 # --------------------------------------------------------------------------- patch scope
@@ -519,6 +556,7 @@ class VerificationResult(BaseModel):
     new_lint_issues: list[str] = Field(default_factory=list)
     dependency_changes: list[str] = Field(default_factory=list)
     patch_security_findings: list[SecurityFinding] = Field(default_factory=list)
+    resolved_finding_ids: list[str] = Field(default_factory=list)  # original findings the re-run scanners no longer report
     checks_performed: list[str] = Field(default_factory=list)
     checks_not_performed: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
@@ -587,6 +625,7 @@ class JobResults(BaseModel):
     security: SecurityReport | None = None
     patch_scope: PatchScopeReport | None = None  # PatchPilot's own patch (or the supplied one in patch_review jobs)
     supplied_patch_scope: PatchScopeReport | None = None  # user-supplied patch reviewed as part of a full analysis
+    risk_score: RiskScoreReport | None = None
     report: Report | None = None
 
 
@@ -633,6 +672,8 @@ class Job(BaseModel):
             "bugs": len(r.diagnosis.findings) if r.diagnosis else 0,
             "security_findings": len(sec),
             "verification_status": r.verification.status if r.verification else None,
+            "risk_score": r.risk_score.before.score if r.risk_score else None,
+            "risk_score_after": r.risk_score.after.score if r.risk_score and r.risk_score.after else None,
             "llm_mode": self.llm_mode,
             "source": self.source,
         }

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 import httpx
 
 from ..config import PROJECT_DIR, Settings
-from ..core.models import Confidence, ScannerRun, SecurityFinding, SecurityReport, Severity, new_id
+from ..core.models import CodeQualitySummary, Confidence, ScannerRun, SecurityFinding, SecurityReport, Severity, new_id
 from ..ingest.indexer import RepoIndex
 from ..ingest.secrets import find_secrets, redact
 from .malware import run_clamav
@@ -344,7 +345,31 @@ def run_security_scan(root: Path, index: RepoIndex, settings: Settings, include_
 
     # Scanners are independent read-only tools, so they run at the same time (order of results kept).
     with ThreadPoolExecutor(max_workers=4, thread_name_prefix="scanner") as pool:
+        quality = pool.submit(code_quality, root, index)
         for run, found in pool.map(safe, steps):
             runs.append(run)
             findings += found
-    return SecurityReport(scanners=runs, findings=dedupe(findings))
+        try:
+            cq = quality.result()
+        except Exception as e:  # lint must never break the security scan
+            cq = CodeQualitySummary(status="failed", message=f"{type(e).__name__}: {e}"[:200])
+    return SecurityReport(scanners=runs, findings=dedupe(findings), code_quality=cq)
+
+
+SEVERE_LINT = ("E9", "F63", "F7", "F82")  # syntax errors, invalid comparisons/statements, undefined names
+
+
+def code_quality(root: Path, index: RepoIndex) -> CodeQualitySummary:
+    """Correctness-focused Ruff lint of the whole repository, summarised for the risk score."""
+    py = [f for f in index.files.values() if f.language == "Python" and f.text is not None]
+    if not py:
+        return CodeQualitySummary(status="not_applicable", message="no Python files")
+    lines = sum(f.lines for f in py if not f.is_test)
+    run, issues = run_ruff(root)
+    if run.status != "completed":
+        return CodeQualitySummary(status="unavailable" if run.status == "unavailable" else "failed", python_lines=lines, message=run.message)
+    issues = [i for i in issues if not i["file"].startswith(".patchpilot")]
+    codes = Counter(i["code"] for i in issues)
+    severe = sum(n for c, n in codes.items() if c == "syntax" or c.startswith(SEVERE_LINT))
+    return CodeQualitySummary(status="completed", python_lines=lines, issues=len(issues), severe=severe,
+                              top_codes=dict(codes.most_common(6)))

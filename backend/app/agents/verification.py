@@ -263,7 +263,14 @@ def _evidence(f: SecurityFinding, index: RepoIndex) -> str:
 # --------------------------------------------------------------------------- patch verification
 
 
-def _patch_scan(ctx: AgentContext, patched: Path, changed: set[str], original_findings: list[SecurityFinding]) -> tuple[list[SecurityFinding], list[str]]:
+_RUN_TO_FINDING_SCANNER = {"bandit": "bandit", "semgrep": "semgrep", "patchpilot-secrets": "secrets", "patchpilot-suspicious": "suspicious"}
+
+
+def _patch_scan(ctx: AgentContext, patched: Path, changed: set[str], original_findings: list[SecurityFinding]
+                ) -> tuple[list[SecurityFinding], list[str], list[str]]:
+    """Returns (findings introduced by the patch, scanner statuses, ids of original findings resolved).
+    A finding only counts as resolved if the scanner that reported it re-ran successfully on the
+    patched file and no longer reports it."""
     idx = build_index(patched, max_file_kb=ctx.settings.max_index_file_kb)
     runs, found = [], []
     def semgrep_step():
@@ -281,13 +288,17 @@ def _patch_scan(ctx: AgentContext, patched: Path, changed: set[str], original_fi
             runs.append(r)
             found += f
     before = {fingerprint(f) for f in original_findings}
+    after_changed = {fingerprint(f) for f in found if f.file_path in changed}
+    rescanned = {_RUN_TO_FINDING_SCANNER[r.name] for r in runs if r.status == "completed" and r.name in _RUN_TO_FINDING_SCANNER}
+    resolved = [o.id for o in original_findings
+                if o.file_path in changed and o.scanner in rescanned and fingerprint(o) not in after_changed]
     introduced = []
     for f in found:
         if f.file_path in changed and fingerprint(f) not in before:
             f.introduced_by_patch = True
             f.category = "patch_security" if f.category != "secret" else "secret"
             introduced.append(f)
-    return introduced, [f"{r.name}: {r.status}" for r in runs]
+    return introduced, [f"{r.name}: {r.status}" for r in runs], resolved
 
 
 def verify_patch(ctx: AgentContext, patch: PatchProposal, patched: Path, repro: Reproduction | None,
@@ -355,7 +366,7 @@ def verify_patch(ctx: AgentContext, patch: PatchProposal, patched: Path, repro: 
             res.checks_not_performed.append(f"lint ({r_after.message or r_after.status})")
 
     # 5. patch security (started in parallel with the tests above)
-    res.patch_security_findings, scan_status = scan_future.result()
+    res.patch_security_findings, scan_status, res.resolved_finding_ids = scan_future.result()
     res.checks_performed.append("security scan of patched files (" + ", ".join(scan_status) + ")")
 
     # 6. what we did not do

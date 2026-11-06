@@ -116,6 +116,9 @@ def test_no_sandbox_consent_blocks_execution(settings):
     assert job.agents["reproduction"].status == "blocked"
     assert r.verification.status == "blocked"  # a patch exists but is NOT reported as verified
     assert job.status != "completed"
+    if r.risk_score:  # tests never ran: verification is "not assessed", not free points
+        assert not {c.key: c for c in r.risk_score.before.components}["verification"].assessed
+        assert r.risk_score.after is None or {c.key: c for c in r.risk_score.after.components}["verification"].deduction > 0
 
 
 def test_missing_api_key_degrades_honestly(settings):
@@ -212,6 +215,13 @@ def test_full_analysis_with_bug_runs_repair_and_security(settings):
     assert r.verification.status == "verified" and r.security is not None and r.patch_scope is not None
     assert all(job.agents[a].status == "completed" for a in ("bug_investigation", "reproduction", "repair", "verification"))
     assert r.supplied_patch_scope is None  # nothing supplied
+    rs = r.risk_score  # proven bug (before) -> verified patch (after), from real test runs
+    before = {c.key: c for c in rs.before.components}
+    after = {c.key: c for c in rs.after.components}
+    assert before["verification"].deduction == 15 and after["verification"].deduction == 0
+    assert before["code_quality"].assessed  # Ruff ran over the repository
+    assert rs.after.score > rs.before.score
+    assert "PatchPilot Risk Score" in r.report.markdown and "no AI" in r.report.markdown
 
 
 def test_full_analysis_without_bug_reviews_supplied_patch(settings):
