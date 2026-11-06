@@ -166,6 +166,19 @@ def build_markdown(job: Job, report: Report) -> str:
             L.append(f"- … {len(s.findings) - 60} more findings in the JSON report")
         if s.triage_summary:
             L += ["", f"**Triage summary (AI):** {s.triage_summary}"]
+        explained = [f for f in s.findings if f.explanation]
+        if explained:
+            L += ["", "### Vulnerability explanations *(location and code: tool evidence; explanation: AI assessment)*"]
+            for f in explained:
+                e = f.explanation
+                L += ["", f"#### {f.severity.upper()}: {f.title} [{f.scanner}/{f.rule_id}]", "", f"- **Where:** `{e.where}`"]
+                if e.code_evidence:
+                    L += ["", "```", e.code_evidence, "```", ""]
+                L += [f"- **What it is:** {e.what}", f"- **Why it is dangerous:** {e.why_dangerous}",
+                      f"- **How it could be exploited:** {e.how_exploited}", f"- **How to fix it:** {e.how_to_fix}"]
+                if e.fix_example:
+                    L += ["", "  Suggested change (not applied):", "", "```", e.fix_example, "```", ""]
+                L.append(f"- **How to verify the fix:** {e.how_to_verify}")
         if s.malware:
             m = s.malware
             verdict = {"no_malicious_indicators": "No malicious indicators found", "suspicious_needs_review": "Suspicious — needs human review",

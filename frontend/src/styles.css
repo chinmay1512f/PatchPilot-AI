@@ -369,3 +369,18 @@ code, pre, .mono, .code, .md code { font-variant-ligatures: none; font-feature-s
 .btn.danger-solid:hover { filter: brightness(0.95); }
 tr.row-selected td { background: #f2f6ff; }
 td input[type="checkbox"], th input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; cursor: pointer; }
+
+/* ---------- security explanations ---------- */
+.explain { border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.explain > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; font-size: 13.5px; color: var(--accent); display: flex; align-items: center; gap: 6px; list-style: none; }
+.explain > summary::-webkit-details-marker { display: none; }
+.explain > summary::after { content: "▸"; margin-left: auto; color: var(--muted); transition: transform 0.15s; }
+.explain[open] > summary::after { transform: rotate(90deg); }
+.explain-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 10px; }
+.explain-where { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.explain-where pre { margin: 0; }
+.explain-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.explain-part { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.explain-part pre { margin: 4px 0 0; }
+.explain-title { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+@media (max-width: 760px) { .explain-grid { grid-template-columns: minmax(0, 1fr); } }

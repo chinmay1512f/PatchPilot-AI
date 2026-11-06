@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { apiUrl } from "../api";
 import { BarChart } from "../charts";
-import type { Job, PatchScopeReport, SecurityFinding, TestRun, VerificationResult } from "../types";
+import type { Job, PatchScopeReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
 import {
   Badge, ConfidenceBadge, DiffView, Empty, ExcerptView, FileModal, Icon, Markdown, SeverityBadge, Src, StatusBadge, fmtTime, label,
 } from "../ui";
+import type { IconName } from "../ui";
 
 type Open = { path: string; hl?: [number, number]; version?: string } | null;
 
@@ -463,7 +464,46 @@ function FindingCard({ f, onOpen }: { f: SecurityFinding; onOpen: () => void }) 
           <div className="small">{f.ai_assessment.rationale}</div>
         </div>
       )}
+      {f.explanation && <Explanation e={f.explanation} />}
     </div>
+  );
+}
+
+const EXPLAIN_PARTS: { key: keyof SecurityExplanation; title: string; icon: IconName }[] = [
+  { key: "what", title: "What it is", icon: "search" },
+  { key: "why_dangerous", title: "Why it is dangerous", icon: "alert" },
+  { key: "how_exploited", title: "How it could be exploited", icon: "shield" },
+  { key: "how_to_fix", title: "How to fix it", icon: "wrench" },
+  { key: "how_to_verify", title: "How to verify the fix", icon: "check" },
+];
+
+function Explanation({ e }: { e: SecurityExplanation }) {
+  return (
+    <details className="explain">
+      <summary><Icon name="sparkle" size={14} /> Explain this vulnerability<span className="muted small"> — what, where, why, exploit, fix, verify</span></summary>
+      <div className="explain-body">
+        <div className="explain-where">
+          <div className="row small"><strong>Where it is</strong><Src kind="tool" /></div>
+          <div className="mono small">{e.where}</div>
+          {e.code_evidence && <pre className="block mono">{e.code_evidence}</pre>}
+        </div>
+        <div className="row small" style={{ marginTop: 4 }}><Src kind="model" /><span className="muted">Claude's explanation of the code above — an assessment, not executed evidence.</span></div>
+        <div className="explain-grid">
+          {EXPLAIN_PARTS.map((p) => (
+            <div key={p.key} className="explain-part">
+              <div className="explain-title"><Icon name={p.icon} size={14} /> {p.title}</div>
+              <div className="small">{e[p.key]}</div>
+              {p.key === "how_to_fix" && e.fix_example && (
+                <>
+                  <div className="muted small" style={{ marginTop: 6 }}>Suggested change (not applied):</div>
+                  <pre className="block mono">{e.fix_example}</pre>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -472,6 +512,7 @@ export function SecurityTab({ job }: { job: Job }) {
   const { setOpen, modal } = useFile(job.id);
   const [cat, setCat] = useState("all");
   const [sev, setSev] = useState("all");
+  const [onlyExplained, setOnlyExplained] = useState(false);
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     s?.findings.forEach((f) => { c[f.severity] = (c[f.severity] ?? 0) + 1; });
@@ -479,7 +520,8 @@ export function SecurityTab({ job }: { job: Job }) {
   }, [s]);
   if (!s) return <Empty title="No security scan">{job.options.run_security_scan ? job.agents.verification?.message : "Security scanning was disabled for this analysis."}</Empty>;
   const cats = Array.from(new Set(s.findings.map((f) => f.category)));
-  const shown = s.findings.filter((f) => (cat === "all" || f.category === cat) && (sev === "all" || f.severity === sev));
+  const explainedCount = s.findings.filter((f) => f.explanation).length;
+  const shown = s.findings.filter((f) => (cat === "all" || f.category === cat) && (sev === "all" || f.severity === sev) && (!onlyExplained || f.explanation));
   const version = job.analysis_type === "patch_review" ? "modified" : "original";
   return (
     <div className="stack">
@@ -512,6 +554,12 @@ export function SecurityTab({ job }: { job: Job }) {
         <select value={sev} onChange={(e) => setSev(e.target.value)} style={{ width: "auto" }}>
           <option value="all">All severities</option>{SEV_ORDER.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
+        {explainedCount > 0 && (
+          <label className="row small" style={{ gap: 6, cursor: "pointer" }}>
+            <input type="checkbox" checked={onlyExplained} onChange={(e) => setOnlyExplained(e.target.checked)} style={{ width: "auto" }} />
+            Explained only ({explainedCount})
+          </label>
+        )}
         <span className="muted small">{shown.length} shown</span>
       </div>
       {shown.map((f) => <FindingCard key={f.id} f={f} onOpen={() => f.file_path && setOpen({ path: f.file_path, hl: f.line ? [f.line, f.line] : undefined, version })} />)}

@@ -153,6 +153,40 @@ def test_security_scan_flow(settings):
     assert "Malware check" in job.results.report.markdown and "malware check" in job.agents["verification"].message
 
 
+def test_security_explanations(settings):
+    """Top findings get a full explanation; location and code come from the tools, never the model."""
+    seen = {}
+
+    def triage(prompt):
+        marks = dict(re.findall(r"finding_id=(sec_[a-f0-9]+) explain=(yes|no)", prompt))
+        seen.update(marks)
+        expl = {"what": "SQL built from user input", "why_dangerous": "data exposure", "how_exploited": "crafted note title",
+                "how_to_fix": "use parameters", "fix_example": "cur.execute(q, (title,))", "how_to_verify": "Bandit B608 stops reporting"}
+        yes = [i for i, m in marks.items() if m == "yes"]
+        no = [i for i, m in marks.items() if m == "no"]
+        items = [{"finding_id": yes[0], "verdict": "likely_true_positive", "priority": "urgent", "rationale": "real", "explanation": expl},
+                 {"finding_id": yes[1], "verdict": "likely_false_positive", "priority": "low", "rationale": "test data", "explanation": expl},
+                 {"finding_id": "sec_invented", "verdict": "likely_true_positive", "priority": "high", "rationale": "x", "explanation": expl}]
+        if no:  # an explanation for a finding that was not asked for is dropped
+            items.append({"finding_id": no[0], "verdict": "needs_review", "priority": "normal", "rationale": "x", "explanation": expl})
+        return {"items": items, "summary": "review"}
+    settings.security_explanations_max = 3
+    llm = FakeLLM(script={**COMMON, "TriageDraft": [triage]})
+    job, _ = _run(settings, "insecure-notes", "repo", AnalysisType.security_scan, "", llm, allow_local=False)
+    sec = job.results.security
+    assert list(seen.values()).count("yes") == 3
+    explained = [f for f in sec.findings if f.explanation]
+    assert len(explained) == 1  # false positive, invented id and unrequested finding are not explained
+    f = explained[0]
+    e = f.explanation
+    assert e.where.startswith(f.file_path) and (f"line {f.line}" in e.where if f.line else True)
+    if f.line:
+        assert f"{f.line:>5}| " in e.code_evidence  # real excerpt with line numbers
+    assert "AKIAIOSFODNN7EXAMPLE" not in e.code_evidence
+    md = job.results.report.markdown
+    assert "Vulnerability explanations" in md and "How to verify the fix" in md and "Suggested change (not applied)" in md
+
+
 def test_patch_review_flow(settings):
     scope = {"findings": [
         {"file_path": "inventory/stock.py", "line_start": 66, "line_end": 69, "category": "unrelated_function", "observation": "format_report rewritten",

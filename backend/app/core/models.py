@@ -339,6 +339,19 @@ class AIAssessment(BaseModel):
     priority: Literal["urgent", "high", "normal", "low"] = "normal"
 
 
+class SecurityExplanation(BaseModel):
+    """Plain-language explanation of one finding. The text fields are Claude's assessment; ``where``
+    and ``code_evidence`` are filled in by PatchPilot from the tool evidence and the real file."""
+    what: str
+    where: str = ""  # tool evidence: file, line and enclosing function
+    why_dangerous: str
+    how_exploited: str  # conceptual scenario only — never exploit code
+    how_to_fix: str
+    fix_example: str = ""  # optional short corrected snippet (a suggestion, not applied)
+    how_to_verify: str
+    code_evidence: str = ""  # tool evidence: real (secret-redacted) excerpt with line numbers
+
+
 class SecurityFinding(BaseModel):
     id: str
     scanner: str  # bandit, semgrep, ruff, secrets, gitleaks, osv, suspicious
@@ -357,6 +370,7 @@ class SecurityFinding(BaseModel):
     introduced_by_patch: bool = False
     is_malware_confirmed: bool = False  # never set True by pattern matching alone
     ai_assessment: AIAssessment | None = None
+    explanation: SecurityExplanation | None = None
     source: Literal["tool"] = "tool"
 
 

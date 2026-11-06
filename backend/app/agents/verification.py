@@ -25,6 +25,7 @@ from ..core.models import (
     PatchProposal,
     Reproduction,
     ScannerRun,
+    SecurityExplanation,
     SecurityFinding,
     SecurityReport,
     Severity,
@@ -34,8 +35,9 @@ from ..core.models import (
     VerificationStatus,
 )
 from ..ingest.indexer import RepoIndex, build_index
+from ..ingest.secrets import redact
 from ..llm.client import LLMError, untrusted
-from ..tools.diffing import dependency_changes, diff_trees
+from ..tools.diffing import dependency_changes, diff_trees, enclosing_function
 from ..tools.scanners import (
     fingerprint,
     run_bandit,
@@ -54,7 +56,21 @@ defensive review of scanner output for the repository owner. For each finding, l
 context and decide whether it is likely a true positive, likely a false positive, or needs human
 review, and how urgently it should be handled. Pattern matches for "suspicious code" are not proof
 of malware: legitimate software uses subprocesses, networking and file deletion. Explain the
-evidence briefly. Do not provide exploit code."""
+evidence briefly. Do not provide exploit code.
+
+Findings marked explain=yes also need a full explanation for a developer who is not a security
+expert (unless you judge the finding a likely false positive — then leave explanation empty and say
+why in the rationale). Base it on the code shown, not on generic text about the rule:
+- what: what the vulnerability is, in one or two plain sentences.
+- why_dangerous: what could go wrong for this application and its users.
+- how_exploited: a realistic attack scenario at a conceptual level — who could trigger it, through
+  which input or access, and what they would gain. No working exploit code, payloads or
+  step-by-step attack instructions.
+- how_to_fix: the concrete change for this code (for dependencies: which version to upgrade to, if
+  the description says).
+- fix_example: optional short snippet with only the corrected lines; leave empty if not useful.
+- how_to_verify: how to confirm the fix — e.g. which scanner rule should stop reporting at this
+  location, and a test idea that would fail before and pass after the fix."""
 TRIAGE_SYSTEM += "\n\n" + PLAIN_LANGUAGE
 
 INTERPRET_SYSTEM = """You are the Verification & Security agent. Interpret the tool evidence about a
@@ -64,11 +80,21 @@ should check. Do not claim any check passed unless the evidence says so."""
 INTERPRET_SYSTEM += "\n\n" + PLAIN_LANGUAGE
 
 
+class ExplanationDraft(BaseModel):
+    what: str
+    why_dangerous: str
+    how_exploited: str
+    how_to_fix: str
+    fix_example: str = ""
+    how_to_verify: str
+
+
 class TriageItem(BaseModel):
     finding_id: str
     verdict: Literal["likely_true_positive", "likely_false_positive", "needs_review"]
     priority: Literal["urgent", "high", "normal", "low"]
     rationale: str
+    explanation: ExplanationDraft | None = None  # only for findings marked explain=yes
 
 
 class TriageDraft(BaseModel):
@@ -184,11 +210,14 @@ def triage(ctx: AgentContext, report: SecurityReport, index: RepoIndex) -> None:
         return
     order = list(Severity)
     selected = sorted(report.findings, key=lambda f: (order.index(f.severity), f.category != "suspicious_code"))[:30]
+    # The most severe security findings (lint is code style, not security) get a full explanation.
+    explain = {f.id for f in [x for x in selected if x.category != "lint"][: max(0, ctx.settings.security_explanations_max)]}
     blocks = []
     for f in selected:
-        ctx_text = index.excerpt(f.file_path, f.line, f.line, context=4) if f.file_path and f.line else f.snippet
-        blocks.append(f"finding_id={f.id} scanner={f.scanner} rule={f.rule_id} severity={f.severity} category={f.category}\n"
-                      f"location={f.file_path}:{f.line}\ndescription={f.description}\n" + untrusted(f"{f.file_path}", ctx_text))
+        ctx_text = index.excerpt(f.file_path, f.line, f.line, context=6 if f.id in explain else 4) if f.file_path and f.line else f.snippet
+        blocks.append(f"finding_id={f.id} explain={'yes' if f.id in explain else 'no'} scanner={f.scanner} rule={f.rule_id} "
+                      f"severity={f.severity} category={f.category}\n"
+                      f"location={f.file_path}:{f.line}\ntitle={f.title}\ndescription={f.description}\n" + untrusted(f"{f.file_path}", ctx_text))
     try:
         draft = ctx.llm.structured(agent="verification", system=TRIAGE_SYSTEM, messages="Scanner findings to triage:\n\n" + "\n\n".join(blocks),
                                    output_model=TriageDraft, effort="medium")
@@ -196,15 +225,39 @@ def triage(ctx: AgentContext, report: SecurityReport, index: RepoIndex) -> None:
         report.triage_status = f"failed: {e}"
         return
     by_id = {f.id: f for f in report.findings}
-    applied = 0
+    applied = explained = 0
     for item in draft.items:
         f = by_id.get(item.finding_id)
-        if f:
-            f.ai_assessment = AIAssessment(verdict=item.verdict, rationale=item.rationale, priority=item.priority)
-            applied += 1
+        if not f:
+            continue
+        f.ai_assessment = AIAssessment(verdict=item.verdict, rationale=item.rationale, priority=item.priority)
+        applied += 1
+        if item.explanation and f.id in explain and item.verdict != "likely_false_positive":
+            f.explanation = SecurityExplanation(**item.explanation.model_dump(), where=_where(f, index), code_evidence=_evidence(f, index))
+            explained += 1
     report.triage_status = "completed"
     report.triage_summary = draft.summary + ("" if len(selected) == len(report.findings) else f" (AI triage covered the top {len(selected)} of {len(report.findings)} findings.)")
-    ctx.log("verification", f"AI triage annotated {applied} findings")
+    ctx.log("verification", f"AI triage annotated {applied} findings; detailed explanations for {explained}")
+
+
+def _where(f: SecurityFinding, index: RepoIndex) -> str:
+    """Location from the tool evidence (never from the model)."""
+    if not f.file_path:
+        return f.title
+    where = f.file_path + (f", line {f.line}" if f.line else "")
+    src = index.resolve(f.file_path)
+    if src and src.text and f.line and f.file_path.endswith(".py"):
+        fn = enclosing_function(src.text, f.line)
+        if fn:
+            where += f", in {fn}()"
+    return where
+
+
+def _evidence(f: SecurityFinding, index: RepoIndex) -> str:
+    """Real code around the finding, secret-redacted, with line numbers."""
+    if f.file_path and f.line and index.resolve(f.file_path):
+        return index.excerpt(f.file_path, f.line, f.line, context=4)
+    return redact(f.snippet)[0] if f.snippet else ""
 
 
 # --------------------------------------------------------------------------- patch verification

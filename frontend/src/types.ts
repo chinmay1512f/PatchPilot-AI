@@ -50,6 +50,12 @@ export interface SecurityFinding {
   id: string; scanner: string; category: string; rule_id: string; title: string; severity: Severity; confidence: Confidence;
   file_path?: string; line?: number; snippet: string; description: string; references: string[]; introduced_by_patch: boolean;
   is_malware_confirmed: boolean; ai_assessment?: { verdict: string; rationale: string; priority: string } | null;
+  explanation?: SecurityExplanation | null;
+}
+/** Text fields are Claude's assessment; `where` and `code_evidence` come from the tools and the real file. */
+export interface SecurityExplanation {
+  what: string; where: string; why_dangerous: string; how_exploited: string; how_to_fix: string; fix_example: string;
+  how_to_verify: string; code_evidence: string;
 }
 export interface ScannerRun { name: string; version?: string; status: string; findings: number; duration_seconds: number; message: string }
 export interface MalwareAssessment {
