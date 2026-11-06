@@ -423,6 +423,54 @@ class CodeQualitySummary(BaseModel):
     message: str = ""
 
 
+class AttackStep(BaseModel):
+    """One link in a possible attack chain. The finding, location and severity are tool evidence;
+    ``action`` and ``gains`` are Claude's conceptual description."""
+    finding_id: str
+    title: str
+    scanner: str
+    file_path: str | None = None
+    line: int | None = None
+    severity: Severity
+    action: str
+    gains: str
+
+
+class AttackPath(BaseModel):
+    id: str
+    title: str
+    attacker: str  # who could start it, e.g. "anyone who can read the repository"
+    entry_point: str
+    steps: list[AttackStep]
+    impact: str
+    severity: Severity
+    likelihood: Literal["low", "medium", "high"]
+    confidence: Confidence
+    preconditions: list[str] = Field(default_factory=list)
+    break_the_chain: str = ""  # the single fix that stops this path most cheaply
+
+
+class EntryPoint(BaseModel):
+    rank: int
+    finding_id: str
+    title: str
+    file_path: str | None = None
+    line: int | None = None
+    severity: Severity
+    reason: str
+
+
+class AttackPathReport(BaseModel):
+    status: str  # completed | not_needed | unavailable | failed: …
+    paths: list[AttackPath] = Field(default_factory=list)
+    entry_points: list[EntryPoint] = Field(default_factory=list)
+    summary: str = ""
+    findings_considered: int = 0
+    dropped: list[str] = Field(default_factory=list)  # what validation removed, and why
+    disclaimer: str = ("Possible attack paths — Claude's assessment of how the detected findings could be combined. "
+                       "Not a confirmed exploit and not a penetration test; every step links to a real scanner finding.")
+
+
 class SecurityReport(BaseModel):
     scanners: list[ScannerRun]
     findings: list[SecurityFinding]
@@ -430,6 +478,7 @@ class SecurityReport(BaseModel):
     triage_summary: str = ""
     malware: MalwareAssessment | None = None
     code_quality: CodeQualitySummary | None = None
+    attack_paths: AttackPathReport | None = None
 
 
 class ScoreComponent(BaseModel):

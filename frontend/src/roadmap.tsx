@@ -77,8 +77,25 @@ export function buildRoadmap(job: Job): RoadmapStep[] {
     bugs.detail = r.diagnosis.mode === "discovery" ? `Code audit found ${plural(n, "possible bug")}` : `${plural(n, "finding")} for the reported bug`;
   } else if (bugs.status === "running") bugs.detail = "Claude is reading the code…";
 
-  // 5. Attack path analysis — feature not built yet; shown honestly instead of pretending to run.
-  const attack: RoadmapStep = { key: "attack", title: "Attack Path Analysis", icon: "alert", status: "unavailable", detail: "Coming soon — not part of this version" };
+  // 5. Attack path analysis (part of Agent 5's security work, after triage)
+  const attackStart = audit.find((e) => e.message.startsWith("attack path analysis started"));
+  let attack: RoadmapStep = { key: "attack", title: "Attack Path Analysis", icon: "alert", status: "pending", detail: "Runs after the security scan", parallel: true };
+  const ap = sec?.attack_paths;
+  if (security.status === "skipped" || security.status === "failed") attack = { ...attack, status: security.status, detail: security.detail };
+  else if (ap) {
+    const sevOrder = ["critical", "high", "medium", "low", "info"];
+    const worst = ap.paths.map((p) => p.severity).sort((a, b) => sevOrder.indexOf(a) - sevOrder.indexOf(b))[0];
+    if (ap.status === "completed") {
+      attack = { ...attack, status: ap.paths.length ? "warn" : "done",
+                 detail: ap.paths.length ? `${plural(ap.paths.length, "possible attack path")} · worst: ${worst}` : "No realistic chain found" };
+    } else if (ap.status === "not_needed") attack = { ...attack, status: "done", detail: "Fewer than 2 findings — nothing to chain" };
+    else attack = { ...attack, status: ap.status.startsWith("failed") ? "failed" : "skipped", detail: ap.summary || ap.status };
+  } else if (sec) attack = { ...attack, status: "skipped", detail: "Not part of this scan" };
+  else if (attackStart && !finished) {
+    attack = { ...attack, status: "running", detail: "Claude is checking how findings could combine…" };
+    security = { ...security, status: "done", detail: "Scan complete · results being finalised" };
+    if (deps.status === "running") deps = { ...deps, status: "done", detail: "Checked · results being finalised" };
+  } else if (finished) attack = { ...attack, status: "skipped", detail: "Not run" };
 
   // 6. AI repair (Agent 4)
   const rep = job.agents.repair;

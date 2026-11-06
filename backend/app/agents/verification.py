@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from ..core.models import (
     AIAssessment,
+    AttackPathReport,
     MalwareAssessment,
     MalwareDraft,
     Diagnosis,
@@ -49,6 +50,7 @@ from ..tools.scanners import (
 )
 from ..tools.testing import run_pytest
 from ..tools.malware import INDICATOR_CATALOG
+from . import attack_paths
 from .base import PLAIN_LANGUAGE, AgentContext
 
 TRIAGE_SYSTEM = """You are the security triage part of the Verification & Security agent, doing
@@ -114,6 +116,11 @@ def security_review(ctx: AgentContext, include_osv: bool = True) -> SecurityRepo
         jobs = [pool.submit(triage, ctx, report, ctx.index), pool.submit(malware_review, ctx, report, ctx.index)]
         for j in jobs:
             j.result()
+    # Runs after triage so findings judged likely false positives are not chained.
+    try:
+        report.attack_paths = attack_paths.analyse(ctx, report, ctx.index)
+    except Exception as e:  # noqa: BLE001 — optional analysis; never lose the scan results
+        report.attack_paths = AttackPathReport(status=f"failed: {type(e).__name__}: {e}"[:300])
     return report
 
 

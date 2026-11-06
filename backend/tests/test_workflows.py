@@ -39,6 +39,7 @@ COMMON = {
     "VerificationInterpretation": [{"assessment": "evidence supports fix", "unresolved_issues": [], "reviewer_notes": []}],
     "ScopeAssessmentDraft": [{"findings": [], "overall_assessment": "appears_minimal", "summary": "one-line change", "limitations": []}],
     "TriageDraft": [{"items": [], "summary": "nothing urgent"}],
+    "AttackPathDraft": [{"paths": [], "entry_points": [], "summary": "no chain", "no_chain_reason": "findings are unrelated"}],
     "ReportNarrative": [{"executive_summary": "Fixed.", "key_risks": [], "recommended_next_actions": ["review diff"]}],
     "MalwareDraft": [{"overall": "suspicious_needs_review", "summary": "Telemetry module collects the environment.", "items": [],
                       "recommended_actions": ["Review notes_app/telemetry.py"]}],

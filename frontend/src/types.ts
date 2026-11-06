@@ -64,7 +64,20 @@ export interface MalwareAssessment {
   items: { finding_id: string; verdict: "benign" | "suspicious" | "likely_malicious"; explanation: string }[];
   recommended_actions: string[]; signature_scan: string; limitations: string[];
 }
-export interface SecurityReport { scanners: ScannerRun[]; findings: SecurityFinding[]; triage_status: string; triage_summary: string; malware?: MalwareAssessment | null }
+export interface SecurityReport {
+  scanners: ScannerRun[]; findings: SecurityFinding[]; triage_status: string; triage_summary: string; malware?: MalwareAssessment | null;
+  attack_paths?: AttackPathReport | null;
+}
+/** Finding, location, severity: tool evidence. action/gains and the path narrative: Claude's assessment. */
+export interface AttackStep { finding_id: string; title: string; scanner: string; file_path?: string | null; line?: number | null; severity: Severity; action: string; gains: string }
+export interface AttackPath {
+  id: string; title: string; attacker: string; entry_point: string; steps: AttackStep[]; impact: string; severity: Severity;
+  likelihood: "low" | "medium" | "high"; confidence: Confidence; preconditions: string[]; break_the_chain: string;
+}
+export interface EntryPoint { rank: number; finding_id: string; title: string; file_path?: string | null; line?: number | null; severity: Severity; reason: string }
+export interface AttackPathReport {
+  status: string; paths: AttackPath[]; entry_points: EntryPoint[]; summary: string; findings_considered: number; dropped: string[]; disclaimer: string;
+}
 export interface ChangedFunction { file_path: string; name: string; kind: string; lines_changed: number; implicated: boolean; change_ratio: number }
 export interface PatchScopeFinding {
   id: string; file_path: string; line_start?: number; line_end?: number; category: string; observation: string; reasoning: string;

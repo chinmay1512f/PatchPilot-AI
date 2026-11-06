@@ -436,3 +436,28 @@ td input[type="checkbox"], th input[type="checkbox"] { accent-color: var(--accen
   .rm-text, .rm-title { align-items: flex-start; margin-top: 0; }
   .rm-title { flex-direction: row; }
 }
+
+/* ---------- attack paths ---------- */
+.ap-path { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; background: var(--surface-2); }
+.ap-chain { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding-bottom: 4px; }
+.ap-node-wrap { display: flex; align-items: stretch; flex: 1 1 0; min-width: 0; }
+.ap-arrow { display: flex; align-items: center; padding: 0 6px; font-size: 20px; color: var(--muted); }
+.ap-node { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; flex: 1 1 0; min-width: 160px;
+  display: flex; flex-direction: column; gap: 4px; }
+.ap-start { flex: 0.9 1 0; border-color: var(--warn); background: var(--warn-soft); }
+.ap-impact { border-color: var(--bad); background: var(--bad-soft); }
+.ap-kicker { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.ap-title { font-weight: 650; font-size: 13px; line-height: 1.3; }
+.ap-foot { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.ap-break { background: var(--ok-soft); border: 1px solid var(--ok); color: var(--text); border-radius: 8px; padding: 7px 10px; display: flex; gap: 6px; align-items: baseline; }
+.ap-entries { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ap-entries li { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.ap-entries li.top { border-color: var(--bad); background: var(--bad-soft); }
+.ap-rank { font-weight: 800; color: var(--muted); }
+.ap-entries li.top .ap-rank { color: var(--bad); }
+@media (max-width: 760px) {
+  .ap-chain { flex-direction: column; overflow-x: visible; }
+  .ap-node-wrap { flex-direction: column; }
+  .ap-arrow { transform: rotate(90deg); justify-content: center; padding: 2px 0; }
+  .ap-node { width: auto; }
+}

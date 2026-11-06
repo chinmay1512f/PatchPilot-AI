@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { apiUrl } from "../api";
 import { BarChart } from "../charts";
-import type { Job, PatchScopeReport, RiskScoreReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
+import type { AttackPathReport, Job, PatchScopeReport, RiskScoreReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
 import {
   Badge, ConfidenceBadge, DiffView, Empty, ExcerptView, FileModal, Icon, Markdown, SeverityBadge, Src, StatusBadge, fmtTime, label,
 } from "../ui";
@@ -580,6 +580,84 @@ function Explanation({ e }: { e: SecurityExplanation }) {
   );
 }
 
+// --------------------------------------------------------------------------- attack paths
+
+function AttackPathsCard({ ap, onOpen }: { ap: AttackPathReport; onOpen: (path: string, line?: number | null) => void }) {
+  if (ap.status !== "completed" && ap.status !== "not_needed") {
+    return (
+      <div className="card">
+        <div className="card-head"><h2>Attack path analysis</h2><StatusBadge status={ap.status.startsWith("failed") ? "failed" : ap.status} /></div>
+        <div className="small muted">{ap.summary || ap.status}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h2>Possible attack paths</h2><Src kind="mixed" />
+        <Badge tone="outline">AI assessment · not a confirmed exploit</Badge>
+        <span className="spacer" /><span className="muted small">{ap.findings_considered} findings considered</span>
+      </div>
+      <div className="small" style={{ marginBottom: 10 }}>{ap.summary}</div>
+      {ap.paths.map((p, i) => (
+        <div key={p.id} className={`ap-path sev-${p.severity}`}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <strong>Path {i + 1}: {p.title}</strong><span className="spacer" />
+            <SeverityBadge severity={p.severity} /><Badge tone="outline">likelihood: {p.likelihood}</Badge><ConfidenceBadge confidence={p.confidence} />
+          </div>
+          <div className="ap-chain" role="list" aria-label={`Attack path ${i + 1}`}>
+            <div className="ap-node ap-start" role="listitem">
+              <div className="ap-kicker"><Icon name="alert" size={13} /> Attacker</div>
+              <div className="ap-title">{p.attacker}</div>
+              <div className="small muted">Enters via: {p.entry_point}</div>
+            </div>
+            {p.steps.map((s, n) => (
+              <div key={`${s.finding_id}-${n}`} className="ap-node-wrap" role="listitem">
+                <div className="ap-arrow" aria-hidden>→</div>
+                <div className={`ap-node ap-step sev-${s.severity}`}>
+                  <div className="ap-kicker">Step {n + 1} <SeverityBadge severity={s.severity} /></div>
+                  <div className="ap-title">{s.title}</div>
+                  <div className="small"><Loc path={s.file_path ?? undefined} line={s.line} onOpen={s.file_path ? () => onOpen(s.file_path!, s.line) : undefined} /> <span className="muted">· {s.scanner}</span></div>
+                  <div className="small">{s.action}</div>
+                  <div className="small muted">Gains: {s.gains}</div>
+                </div>
+              </div>
+            ))}
+            <div className="ap-node-wrap" role="listitem">
+              <div className="ap-arrow" aria-hidden>→</div>
+              <div className="ap-node ap-impact">
+                <div className="ap-kicker"><Icon name="x" size={13} /> Impact</div>
+                <div className="small">{p.impact}</div>
+              </div>
+            </div>
+          </div>
+          <div className="ap-foot">
+            {p.preconditions.length > 0 && <div className="small"><strong>Only if:</strong> {p.preconditions.join(" · ")}</div>}
+            <div className="ap-break small"><Icon name="wrench" size={13} /> <strong>Break the chain:</strong> {p.break_the_chain}</div>
+          </div>
+        </div>
+      ))}
+      {ap.entry_points.length > 0 && (
+        <>
+          <div className="divider" />
+          <div className="row" style={{ marginBottom: 6 }}><strong>Most dangerous entry points</strong><Src kind="model" /></div>
+          <ol className="ap-entries">
+            {ap.entry_points.map((e) => (
+              <li key={e.finding_id} className={e.rank === 1 ? "top" : ""}>
+                <div className="row small"><span className="ap-rank">#{e.rank}</span><strong>{e.title}</strong><SeverityBadge severity={e.severity} />
+                  <Loc path={e.file_path ?? undefined} line={e.line} onOpen={e.file_path ? () => onOpen(e.file_path!, e.line) : undefined} /></div>
+                <div className="small muted">{e.reason}</div>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      {ap.dropped.length > 0 && <div className="small muted" style={{ marginTop: 8 }}>Removed by PatchPilot's checks: {ap.dropped.join(" · ")}</div>}
+      <div className="small muted" style={{ marginTop: 8 }}>{ap.disclaimer} Files, lines, severities and scanners shown come from the scanners; the path narrative is Claude's.</div>
+    </div>
+  );
+}
+
 export function SecurityTab({ job }: { job: Job }) {
   const s = job.results.security;
   const { setOpen, modal } = useFile(job.id);
@@ -599,6 +677,7 @@ export function SecurityTab({ job }: { job: Job }) {
   return (
     <div className="stack">
       {modal}
+      {s.attack_paths && <AttackPathsCard ap={s.attack_paths} onOpen={(p, l) => setOpen({ path: p, hl: l ? [l, l] : undefined, version })} />}
       <MalwareCard job={job} />
       <div className="grid grid-2" style={{ alignItems: "start" }}>
         <div className="card">

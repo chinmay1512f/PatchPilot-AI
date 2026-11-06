@@ -95,6 +95,8 @@ class Settings(BaseSettings):
     osv_enabled: bool = True
     semgrep_config: str = ""  # empty = bundled local rules (no network)
     disabled_scanners: str = ""  # comma-separated, e.g. "semgrep,osv" — reported as skipped, never faked
+    attack_paths_enabled: bool = True  # chain detected findings into possible attack paths (one extra Claude call)
+    attack_paths_max_findings: int = 25
     security_explanations_max: int = 10  # full plain-language explanations for the N most severe findings
     patch_recheck_semgrep: bool = False  # re-run Semgrep on the patched files (slow start on Windows); full-repo Semgrep scan always runs
     semgrep_max_memory_mb: int = 0  # 0 = Semgrep default; set on small servers (e.g. 512 MB hosts)

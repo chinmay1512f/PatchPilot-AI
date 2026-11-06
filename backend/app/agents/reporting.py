@@ -211,6 +211,23 @@ def build_markdown(job: Job, report: Report) -> str:
             L += [f"- Next step: {x}" for x in m.recommended_actions]
             L += [f"- Limitation: {x}" for x in m.limitations]
             L.append(f"- Checked for: {'; '.join(m.indicators_checked)}")
+        ap = s.attack_paths
+        if ap and ap.status in ("completed", "not_needed"):
+            L += ["", "### Possible attack paths *(AI assessment — not a confirmed exploit; each step links to a real scanner finding)*", "",
+                  ap.summary, ""]
+            for i, p in enumerate(ap.paths, 1):
+                L += [f"#### Path {i}: {p.title} — severity {p.severity}, likelihood {p.likelihood}, confidence {p.confidence}", "",
+                      f"- **Attacker:** {p.attacker} · **Entry point:** {p.entry_point}"]
+                for n, st in enumerate(p.steps, 1):
+                    loc = f"`{st.file_path}:{st.line}`" if st.line else f"`{st.file_path}`"
+                    L.append(f"  {n}. **{st.severity.upper()}** {st.title} at {loc} [{st.scanner}] — {st.action} → {st.gains}")
+                L += [f"- **Impact:** {p.impact}"] + [f"- Precondition: {c}" for c in p.preconditions]
+                L += [f"- **Break the chain:** {p.break_the_chain}", ""]
+            if ap.entry_points:
+                L += ["**Most dangerous entry points:**"] + [
+                    f"{e.rank}. {e.title} at `{e.file_path}:{e.line}` ({e.severity}) — {e.reason}" for e in ap.entry_points]
+            L += [f"- Removed by validation: {d}" for d in ap.dropped]
+            L += ["", f"_{ap.disclaimer}_"]
         L += ["", "_Suspicious-code findings are pattern matches, not confirmed malware. Absence of findings does not mean the code is secure._", ""]
     for ps in [x for x in (r.patch_scope, r.supplied_patch_scope) if x]:
         m = ps.metrics
