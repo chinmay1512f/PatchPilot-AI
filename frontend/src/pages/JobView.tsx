@@ -3,6 +3,7 @@ import { api, apiUrl } from "../api";
 import type { Job } from "../types";
 import { ANALYSIS_LABEL, Badge, Icon, StatusBadge, fmtTime } from "../ui";
 import { ActivityTab, BugsTab, OverviewTab, PatchTab, ReportTab, ScopeTab, SecurityTab, TestsTab } from "./JobTabs";
+import { Roadmap } from "../roadmap";
 
 const ORDER = ["repo_understanding", "bug_investigation", "reproduction", "repair", "verification", "reporting"];
 
@@ -98,6 +99,8 @@ export function JobView({ id }: { id: string }) {
         <div className="alert info" style={{ marginBottom: 12 }}>Tests ran with restricted local execution (user-approved): {job.execution_backend_detail}</div>
       )}
       {job.error && <div className="alert bad" style={{ marginBottom: 12 }}>{job.error}</div>}
+
+      <Roadmap job={job} />
 
       <div className="pipeline">
         {ORDER.map((name, i) => {
