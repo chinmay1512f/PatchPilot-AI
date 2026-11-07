@@ -16,11 +16,11 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
-from .agents import bug_investigation, patch_scope, repair, repo_understanding, reporting, reproduction, verification
+from .agents import bug_investigation, patch_scope, remediation, repair, repo_understanding, reporting, reproduction, verification
 from .agents.base import AgentContext
 from .config import Settings
 from .core.models import (
-    AGENT_ORDER, AGENT_TITLES, AgentRun, AnalysisType, Job, JobOptions, Reproduction, SecurityReport, StageStatus, VerificationStatus, new_id, utcnow,
+    AGENT_ORDER, AGENT_TITLES, AgentRun, AnalysisType, Job, JobOptions, Remediation, Reproduction, SecurityReport, StageStatus, VerificationStatus, new_id, utcnow,
 )
 from .core import scoring
 from .core.store import JobStore
@@ -186,6 +186,8 @@ class Orchestrator:
                 AnalysisType.security_scan: self._flow_security,
                 AnalysisType.patch_review: self._flow_patch_review,
             }[job.analysis_type](ctx, job)
+            if job.options.auto_remediate and job.analysis_type in (AnalysisType.full_analysis, AnalysisType.security_scan):
+                self._remediate(ctx, job_id)
             with self._stage(job_id, "reporting"):
                 current = self.store.get(job_id)
                 try:  # deterministic score from tool results; must never break the report
@@ -275,6 +277,51 @@ class Orchestrator:
                 a.status = StageStatus.completed
                 a.message = " · ".join(x for x in (a.message, reason) if x)
         self._set(jid, mut)
+
+    def _remediate(self, ctx: AgentContext, jid: str) -> None:
+        """Security fixes: Agent 4 writes them on a copy, Agent 5 re-scans and re-tests. Runs after the
+        main flow (one heavy step at a time keeps small servers within memory)."""
+        current = self.store.get(jid)
+        sec = current.results.security if current else None
+        if sec is None:
+            return
+        prev = current.agents["repair"]
+        prev_status, prev_msg = prev.status, prev.message
+
+        def start(j: Job) -> None:
+            j.current_stage = "repair"
+            a = j.agents["repair"]
+            a.status, a.message = StageStatus.running, "Writing fixes for the top security findings…"
+            if prev_status in (StageStatus.pending, StageStatus.skipped):
+                a.started_at = utcnow()
+        self._set(jid, start)
+        self._audit(jid, "repair", "security fixes started", "stage")
+        baseline = current.results.reproduction.baseline_run if current.results.reproduction else None
+        try:
+            rem = remediation.run(ctx, sec, baseline)
+        except Exception as e:  # noqa: BLE001 — the analysis itself is still valid
+            log.error("job=%s remediation failed\n%s", jid, traceback.format_exc())
+            rem = Remediation(status="unavailable", summary=f"Security fixes could not run: {type(e).__name__}: {e}"[:300])
+
+        def finish(j: Job) -> None:
+            j.results.remediation = rem
+            a = j.agents["repair"]
+            note = f"security fixes: {rem.status.replace('_', ' ')} — {rem.summary}"[:400]
+            if prev_status in (StageStatus.pending, StageStatus.skipped):
+                if rem.status in ("not_needed", "unavailable"):
+                    a.status, a.message = prev_status if prev_status == StageStatus.skipped else StageStatus.skipped, f"{prev_msg + ' · ' if prev_msg else ''}{note}"
+                else:
+                    a.status = StageStatus.inconclusive if rem.status == "failed" else StageStatus.completed
+                    a.message = note
+                a.finished_at = utcnow()
+            else:  # the bug repair already ran: keep its outcome, add the security fixes
+                a.status, a.message = prev_status, f"{prev_msg} · {note}" if prev_msg else note
+            if rem.status not in ("not_needed", "unavailable"):
+                v = j.agents["verification"]
+                checked = f"security fixes re-checked with all scanners{' and tests' if rem.tests_after else ''}"
+                v.message = f"{v.message} · {checked}" if v.message else checked
+        self._set(jid, finish)
+        self._audit(jid, "repair", f"security fixes {rem.status}: {rem.summary}"[:300], "stage")
 
     # ------------------------------------------------------------------ flows
     def _flow_repair(self, ctx: AgentContext, job: Job) -> None:

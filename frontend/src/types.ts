@@ -106,13 +106,13 @@ export interface Job {
   id: string; project_name: string; analysis_type: AnalysisType; bug_description: string; status: StageStatus; current_stage?: string;
   created_at: string; updated_at: string; model: string; llm_mode: string; execution_backend: string; execution_backend_detail: string;
   agents: Record<string, AgentRun>; audit: AuditEvent[]; error?: string; source: string; modified_source?: string | null; has_modified_upload: boolean;
-  options: { allow_local_execution: boolean; run_security_scan: boolean };
+  options: { allow_local_execution: boolean; run_security_scan: boolean; auto_remediate?: boolean };
   usage: { input_tokens: number; output_tokens: number; llm_calls: number; fast_calls?: number; estimated_cost_usd: number };
   results: {
     repo?: RepoSummary; diagnosis?: Diagnosis; reproduction?: Reproduction; patches: PatchProposal[];
     verification?: VerificationResult; verification_history: VerificationResult[]; security?: SecurityReport;
     patch_scope?: PatchScopeReport; supplied_patch_scope?: PatchScopeReport | null; report?: Report;
-    risk_score?: RiskScoreReport | null;
+    risk_score?: RiskScoreReport | null; remediation?: Remediation | null;
   };
 }
 export interface ScoreComponent {
@@ -121,7 +121,22 @@ export interface ScoreComponent {
 }
 export interface RiskScore { score: number; rating: string; basis: "original" | "patched"; components: ScoreComponent[]; factors_assessed: number }
 /** Deterministic: computed from tool results by a fixed formula, never by the model. */
-export interface RiskScoreReport { before: RiskScore; after?: RiskScore | null; after_note: string; method: string }
+export interface RiskScoreReport {
+  before: RiskScore; after?: RiskScore | null; after_note: string; method: string;
+  after_remediation?: RiskScore | null; remediation_note?: string;
+}
+export interface RemediationTarget {
+  finding_id: string; title: string; scanner: string; rule_id: string; category: string; file_path?: string | null; line?: number | null;
+  severity: Severity; outcome: "no_longer_reported" | "still_reported" | "not_attempted"; fix_note: string;
+}
+/** Fixes on a disposable copy; outcomes and test results are tool evidence, fix notes are Claude's. */
+export interface Remediation {
+  status: "verified" | "partial" | "untested" | "failed" | "not_needed" | "unavailable"; summary: string; reasons: string[];
+  targets: RemediationTarget[]; diff: string; redacted_lines: number; files_changed: string[]; lines_added: number; lines_removed: number;
+  apply_errors: string[]; follow_ups: string[]; tests_before?: TestRun | null; tests_after?: TestRun | null; new_failures: string[];
+  new_lint_issues: string[]; findings_before: number; findings_after_count: number; severity_before: Record<string, number>;
+  severity_after: Record<string, number>; introduced: SecurityFinding[]; also_cleared: number;
+}
 export interface JobSummary {
   id: string; project_name: string; analysis_type: AnalysisType; status: StageStatus; current_stage?: string; created_at: string;
   updated_at: string; bugs: number; security_findings: number; verification_status?: string; llm_mode: string; source?: string;

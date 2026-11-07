@@ -112,6 +112,26 @@ def _verification_after(v: VerificationResult) -> ScoreComponent:
     return part
 
 
+def _verification_remediation(r: JobResults) -> ScoreComponent:
+    """Tests on the copy with PatchPilot's security fixes (they do not fix any proven bug)."""
+    part = ScoreComponent(key="verification", label=LABELS["verification"], max_points=MAX["verification"])
+    ta = r.remediation.tests_after if r.remediation else None
+    if not ta or ta.status != "completed":
+        part.assessed = False
+        part.detail = "Not assessed: tests were not run on the copy with the security fixes."
+        return part
+    total = ta.passed + ta.failed + ta.errors
+    if r.reproduction and r.reproduction.status == "reproduced":
+        part.deduction = MAX["verification"]
+        part.detail = "The bug proven earlier is not addressed by the security fixes."
+    elif ta.failed or ta.errors:
+        part.deduction = 8.0
+        part.detail = f"{ta.failed + ta.errors} of {total} tests fail on the fixed copy (they also failed before)."
+    else:
+        part.detail = f"All {total} tests pass on the copy with the security fixes."
+    return part
+
+
 def _rating(score: int, total_deduction: float) -> str:
     if total_deduction == 0:
         return "No issues found by the checks run"
@@ -167,6 +187,17 @@ def compute(r: JobResults) -> RiskScoreReport | None:
     if before is None:
         return None
     report = RiskScoreReport(before=before)
+
+    rem = r.remediation
+    if rem and rem.status in ("verified", "partial", "untested") and rem.scanners_after:
+        after_sec = SecurityReport(scanners=rem.scanners_after, findings=rem.findings_after)
+        parts = _security_parts(after_sec, rem.findings_after)
+        parts += [_code_quality_part(sec.code_quality if sec else None, rem.new_lint_issues), _verification_remediation(r)]
+        report.after_remediation = _score("patched", parts)
+        report.remediation_note = (
+            "After security fixes: every scanner re-ran on the fixed copy"
+            + (" and the test suite ran on it" if rem.tests_after and rem.tests_after.status == "completed" else " (tests were not run)")
+            + ". The fixes are applied to a copy only — your repository is not modified.")
 
     v = r.verification
     if v is None or not v.patch_id:

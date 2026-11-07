@@ -8,6 +8,7 @@ taken from the model.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..core.models import (
@@ -19,6 +20,7 @@ from ..core.models import (
     new_id,
 )
 from ..ingest.indexer import normalize_rel
+from ..ingest.secrets import REDACTED, redact
 from ..llm.client import untrusted
 from ..tools.diffing import combined_diff, diff_trees
 from .base import PLAIN_LANGUAGE, AgentContext
@@ -59,7 +61,10 @@ def _prompt(ctx: AgentContext, bug: str, diagnosis: Diagnosis, repro: Reproducti
     for path in files[:4]:
         f = ctx.index.resolve(path)
         if f and f.text is not None:
-            parts.append(f"Full current content of {path} (no line numbers; copy snippets exactly):\n" + untrusted(path, f.text[:40000]))
+            # Secrets are masked before anything is sent to Claude; apply_edits matches the marker back.
+            parts.append(f"Full current content of {path} (no line numbers; copy snippets exactly; {REDACTED} marks a "
+                         "hidden secret value — copy the marker as-is and never put it in a replacement):\n"
+                         + untrusted(path, redact(f.text[:40000])[0]))
     for prev, ver in history:
         fb = [f"Previous attempt #{prev.attempt} summary: {prev.summary}"]
         if prev.apply_errors:
@@ -72,6 +77,15 @@ def _prompt(ctx: AgentContext, bug: str, diagnosis: Diagnosis, repro: Reproducti
                 fb.append("Newly failing tests: " + ", ".join(ver.new_failures[:10]))
         parts.append(untrusted(f"attempt-{prev.attempt}-feedback", "\n".join(fb)))
     return "\n\n".join(parts)
+
+
+def _match_redacted(text: str, snippet: str) -> str | None:
+    """Find the real text behind a snippet copied from redacted code: each marker matches the hidden
+    value on the same line. Returns the actual text only if it matches exactly once."""
+    parts = [re.escape(p) for p in snippet.split(REDACTED)]
+    pattern = r"[^\n]+?".join(parts)
+    hits = list(re.finditer(pattern, text))
+    return hits[0].group(0) if len(hits) == 1 else None
 
 
 def apply_edits(ctx: AgentContext, draft: RepairDraft, workdir: Path) -> list[str]:
@@ -94,6 +108,15 @@ def apply_edits(ctx: AgentContext, draft: RepairDraft, workdir: Path) -> list[st
         newline = "\r\n" if "\r\n" in text else "\n"
         text_n = text.replace("\r\n", "\n")
         old = e.original_snippet.replace("\r\n", "\n")
+        if REDACTED in e.replacement_snippet:
+            errors.append(f"edit {i}: the replacement contains the secret-redaction marker; it would write {REDACTED} into {rel}")
+            continue
+        if REDACTED in old:
+            # Claude only ever sees secret-redacted code; match the marker against the real (hidden) value.
+            old = _match_redacted(text_n, old)
+            if old is None:
+                errors.append(f"edit {i}: original_snippet (with a redacted secret) not found exactly once in {rel}")
+                continue
         count = text_n.count(old) if old else 0
         if count == 0 and old.strip():
             # Tolerate trailing-whitespace differences, replacing only the matched lines.

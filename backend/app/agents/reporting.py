@@ -72,6 +72,10 @@ def _facts(job: Job) -> dict:
         d["supplied_patch_review"] = {"assessment": sp.overall_assessment, "findings": [f"{f.category}: {f.observation}" for f in sp.findings[:8]],
                                       "introduced_security_findings": [f"{f.severity}: {f.title}" for f in sp.introduced_security[:8]]}
     stages = {k: v.status for k, v in job.agents.items()}
+    if r.remediation and r.remediation.status != "not_needed":
+        rm = r.remediation
+        d["security_fixes"] = {"status": rm.status, "summary": rm.summary, "reasons": rm.reasons[:3],
+                               "outcomes": [f"{t.title}: {t.outcome}" for t in rm.targets], "follow_ups": rm.follow_ups[:3]}
     d["stages"] = stages
     return d
 
@@ -102,6 +106,8 @@ def build_markdown(job: Job, report: Report) -> str:
             L.append(f"| {c.label} | {c.max_points} | {ded} |{col} {detail.replace('|', '/')} |")
         if rs.after_note:
             L += ["", rs.after_note]
+        if rs.after_remediation:
+            L += ["", f"After PatchPilot's security fixes: **{rs.after_remediation.score}/100 — {rs.after_remediation.rating}**. {rs.remediation_note}"]
         L.append("")
     L += ["## Pipeline stages", "", "| Agent | Status | Notes |", "|---|---|---|"]
     for a in job.agents.values():
@@ -229,6 +235,31 @@ def build_markdown(job: Job, report: Report) -> str:
             L += [f"- Removed by validation: {d}" for d in ap.dropped]
             L += ["", f"_{ap.disclaimer}_"]
         L += ["", "_Suspicious-code findings are pattern matches, not confirmed malware. Absence of findings does not mean the code is secure._", ""]
+    rem = r.remediation
+    if rem and rem.status not in ("not_needed",):
+        L += [f"## Security fixes — **{rem.status}** *(AI-written fixes on a disposable copy; checked by re-running every scanner and the tests)*",
+              "", rem.summary, ""]
+        L += [f"- {x}" for x in rem.reasons]
+        if rem.targets:
+            L += ["", "| Finding | Location | Severity | Outcome (scanner re-run) | Fix |", "|---|---|---|---|---|"]
+            L += [f"| {t.title} [{t.scanner}/{t.rule_id}] | `{t.file_path}:{t.line}` | {t.severity} | {t.outcome.replace('_', ' ')} | {t.fix_note.replace('|', '/')[:200]} |"
+                  for t in rem.targets]
+        if rem.findings_before:
+            L += ["", f"- Findings before → after (all scanners): {rem.findings_before} → {rem.findings_after_count}"
+                  + (f"; {rem.also_cleared} other finding(s) also no longer reported" if rem.also_cleared else "")]
+        if rem.tests_after:
+            ta = rem.tests_after
+            L.append(f"- Tests on the fixed copy: {ta.status} — {ta.passed} passed, {ta.failed} failed, {ta.errors} errors; regressions: {len(rem.new_failures)}")
+        L += [f"- New finding introduced: {f.severity} {f.title} at `{f.file_path}:{f.line}`" for f in rem.introduced]
+        L += [f"- Follow-up for a human: {x}" for x in rem.follow_ups]
+        L += [f"- Could not apply: {x}" for x in rem.apply_errors]
+        if rem.diff:
+            L += ["", "Apply locally on a new branch (review first): `git checkout -b patchpilot/security-fixes` then "
+                  f"`git apply --reject patchpilot-{job.id}-security-fixes.diff`"
+                  + (f" — {rem.redacted_lines} line(s) hide a secret value and must be edited by hand." if rem.redacted_lines else ""),
+                  "", "```diff", rem.diff[:8000], "```"]
+        L += ["", "_“No longer reported” means the scanner stopped flagging it after the fix — not proof the code is secure. "
+              "Nothing was pushed or applied to your repository._", ""]
     for ps in [x for x in (r.patch_scope, r.supplied_patch_scope) if x]:
         m = ps.metrics
         title = "your supplied patch" if ps.subject == "user_supplied_patch" else "PatchPilot's patch"

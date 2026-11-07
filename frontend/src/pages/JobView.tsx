@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, apiUrl } from "../api";
 import type { Job } from "../types";
 import { ANALYSIS_LABEL, Badge, Icon, StatusBadge, fmtTime } from "../ui";
-import { ActivityTab, BugsTab, OverviewTab, PatchTab, ReportTab, ScopeTab, SecurityTab, TestsTab } from "./JobTabs";
+import { ActivityTab, BugsTab, OverviewTab, PatchTab, ReportTab, ScopeTab, SecurityFixesTab, SecurityTab, TestsTab } from "./JobTabs";
 import { Roadmap } from "../roadmap";
 
 const ORDER = ["repo_understanding", "bug_investigation", "reproduction", "repair", "verification", "reporting"];
@@ -41,6 +41,7 @@ export function JobView({ id }: { id: string }) {
     }
     if (job.analysis_type === "full_repair" || (job.analysis_type === "full_analysis" && repairish)) t.push(["patch", "Patch review", r.patches.length || null]);
     t.push(["security", "Security center", r.security?.findings.length ?? null]);
+    if (r.remediation && r.remediation.status !== "not_needed") t.push(["fixes", "Security fixes", r.remediation.targets.length || null]);
     if (job.analysis_type === "full_repair" || job.analysis_type === "patch_review" || (job.analysis_type === "full_analysis" && (repairish || job.has_modified_upload))) {
       const n = (r.patch_scope?.findings.length ?? 0) + (r.supplied_patch_scope?.findings.length ?? 0);
       t.push(["scope", "Unnecessary changes", r.patch_scope || r.supplied_patch_scope ? n : null]);
@@ -130,6 +131,7 @@ export function JobView({ id }: { id: string }) {
       {tab === "tests" && <TestsTab job={job} />}
       {tab === "patch" && <PatchTab job={job} />}
       {tab === "security" && <SecurityTab job={job} />}
+      {tab === "fixes" && <SecurityFixesTab job={job} />}
       {tab === "scope" && <ScopeTab job={job} />}
       {tab === "report" && <ReportTab job={job} />}
       {tab === "activity" && <ActivityTab job={job} />}

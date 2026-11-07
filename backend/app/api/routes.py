@@ -129,6 +129,7 @@ async def create_job(
     bug_description: str = Form(""),
     allow_local_execution: bool = Form(False),
     run_security_scan: bool = Form(True),
+    auto_remediate: bool = Form(True),
     modified_file: UploadFile | None = None,
     modified_repo_url: str = Form(""),
 ):
@@ -154,7 +155,8 @@ async def create_job(
     use_modified = has_modified and analysis_type in (AnalysisType.patch_review, AnalysisType.full_analysis)
 
     limiter = _reserve_slot(request)
-    job, ws = orch.new_job("pending", analysis_type, bug_description, JobOptions(allow_local_execution=allow_local_execution, run_security_scan=run_security_scan))
+    job, ws = orch.new_job("pending", analysis_type, bug_description, JobOptions(allow_local_execution=allow_local_execution, run_security_scan=run_security_scan,
+                                                                                  auto_remediate=auto_remediate))
     try:
         info, source, default_name = await _acquire(s, ws, "original", file if has_file else None, repo_url, ws.original)
         job.source = source
@@ -258,6 +260,18 @@ def patch_diff(request: Request, job_id: str, attempt: int | None = None):
         raise HTTPException(404, "no patch for this job")
     p = next((x for x in patches if x.attempt == attempt), patches[-1])
     return Response(p.diff, media_type="text/x-diff", headers={"Content-Disposition": f'attachment; filename="patchpilot-{job.id}-attempt{p.attempt}.diff"'})
+
+
+@router.get("/jobs/{job_id}/security-fixes.diff")
+def security_fixes_diff(request: Request, job_id: str):
+    """PatchPilot's security fixes as a patch (secret-redacted). Apply with `git apply --reject`."""
+    _, store, _ = _state(request)
+    job = _job_or_404(store, job_id)
+    rem = job.results.remediation
+    if not rem or not rem.diff:
+        raise HTTPException(404, "no security fixes for this job")
+    return Response(rem.diff, media_type="text/x-diff",
+                    headers={"Content-Disposition": f'attachment; filename="patchpilot-{job.id}-security-fixes.diff"'})
 
 
 @router.post("/jobs/{job_id}/rerun", status_code=201)

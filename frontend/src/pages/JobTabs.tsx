@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { apiUrl } from "../api";
 import { BarChart } from "../charts";
-import type { AttackPathReport, Job, PatchScopeReport, RiskScoreReport, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
+import type { AttackPathReport, Job, PatchScopeReport, RiskScore, RiskScoreReport, ScoreComponent, SecurityExplanation, SecurityFinding, TestRun, VerificationResult } from "../types";
 import {
   Badge, ConfidenceBadge, DiffView, Empty, ExcerptView, FileModal, Icon, Markdown, SeverityBadge, Src, StatusBadge, fmtTime, label,
 } from "../ui";
-import type { IconName } from "../ui";
+import type { IconName, Tone } from "../ui";
 
 type Open = { path: string; hl?: [number, number]; version?: string } | null;
 
@@ -97,7 +97,13 @@ function ScoreRing({ score, rating, caption }: { score: number; rating: string; 
 }
 
 function RiskScoreCard({ rs }: { rs: RiskScoreReport }) {
-  const after = rs.after ? Object.fromEntries(rs.after.components.map((c) => [c.key, c])) : {};
+  // Up to two "after" scores: PatchPilot's bug fix and its security fixes (each on its own copy).
+  const both = !!(rs.after && rs.after_remediation);
+  const afters = [
+    rs.after && { label: both ? "bug fix" : "after patch", score: rs.after, caption: both ? "After bug fix" : "After PatchPilot's patch" },
+    rs.after_remediation && { label: both ? "security fixes" : "after security fixes", score: rs.after_remediation, caption: "After security fixes" },
+  ].filter(Boolean) as { label: string; score: RiskScore; caption: string }[];
+  const byKey = afters.map((x) => Object.fromEntries(x.score.components.map((c) => [c.key, c])) as Record<string, ScoreComponent>);
   return (
     <div className="card">
       <div className="card-head">
@@ -106,33 +112,34 @@ function RiskScoreCard({ rs }: { rs: RiskScoreReport }) {
       <div className="score-layout">
         <div className="score-rings">
           <ScoreRing score={rs.before.score} rating={rs.before.rating} caption="Original code" />
-          {rs.after && (
-            <>
+          {afters.map((x) => (
+            <div key={x.caption} className="score-rings">
               <div className="score-arrow" aria-hidden>→</div>
-              <ScoreRing score={rs.after.score} rating={rs.after.rating} caption="After PatchPilot's patch" />
-            </>
-          )}
+              <ScoreRing score={x.score.score} rating={x.score.rating} caption={x.caption} />
+            </div>
+          ))}
         </div>
         <div className="score-parts">
           {rs.before.components.map((c) => {
-            const a = after[c.key];
             const kept = c.assessed ? ((c.max_points - c.deduction) / c.max_points) * 100 : 0;
-            const keptAfter = a && a.assessed ? ((a.max_points - a.deduction) / a.max_points) * 100 : null;
+            const changed = afters.map((x, i) => ({ x, a: byKey[i][c.key] })).filter(({ a }) => a && a.assessed && a.deduction !== c.deduction);
+            const best = Math.max(kept, ...changed.map(({ a }) => ((a.max_points - a.deduction) / a.max_points) * 100));
             return (
               <div key={c.key} className={`score-part ${c.assessed ? "" : "na"}`}>
                 <div className="row small">
                   <strong>{c.label}</strong><span className="spacer" />
                   {c.assessed ? (
                     <span className="mono" title="points earned out of the maximum (higher is better)">
-                      {pts(c.max_points - c.deduction)}{a && a.assessed && a.deduction !== c.deduction && <> → <strong>{pts(a.max_points - a.deduction)}</strong></>} / {c.max_points}
+                      {pts(c.max_points - c.deduction)}
+                      {changed.map(({ x, a }) => <span key={x.label}> → <strong>{pts(a.max_points - a.deduction)}</strong>{both && <span className="muted"> ({x.label})</span>}</span>)} / {c.max_points}
                     </span>
                   ) : <span className="muted">not assessed</span>}
                 </div>
                 <div className="score-bar" title={c.detail}>
                   <span style={{ width: `${kept}%` }} />
-                  {keptAfter !== null && keptAfter > kept && <span className="after" style={{ left: `${kept}%`, width: `${keptAfter - kept}%` }} />}
+                  {best > kept && <span className="after" style={{ left: `${kept}%`, width: `${best - kept}%` }} />}
                 </div>
-                <div className="small muted">{c.detail}{a && a.detail !== c.detail ? ` After patch: ${a.detail}` : ""}</div>
+                <div className="small muted">{c.detail}{changed.map(({ x, a }) => a.detail !== c.detail ? ` ${x.caption}: ${a.detail}` : "").join("")}</div>
               </div>
             );
           })}
@@ -140,7 +147,7 @@ function RiskScoreCard({ rs }: { rs: RiskScoreReport }) {
       </div>
       <div className="small muted" style={{ marginTop: 10 }}>
         {rs.method} Based on {rs.before.factors_assessed} of 5 factors; factors that could not be measured are left out rather than counted as passed.
-        {rs.after_note && <> {rs.after_note}</>}
+        {rs.after_note && <> {rs.after_note}</>}{rs.remediation_note && <> {rs.remediation_note}</>}
       </div>
     </div>
   );
@@ -577,6 +584,113 @@ function Explanation({ e }: { e: SecurityExplanation }) {
         </div>
       </div>
     </details>
+  );
+}
+
+// --------------------------------------------------------------------------- security fixes (auto-remediation)
+
+const REM_STATUS: Record<string, { tone: Tone; text: string }> = {
+  verified: { tone: "ok", text: "Fixes verified against the checks" },
+  partial: { tone: "warn", text: "Some findings fixed" },
+  untested: { tone: "warn", text: "Fixed per scanners — tests not run" },
+  failed: { tone: "bad", text: "Fixes did not pass the checks" },
+  not_needed: { tone: "neutral", text: "Nothing to fix automatically" },
+  unavailable: { tone: "neutral", text: "Security fixes unavailable" },
+};
+const OUTCOME: Record<string, { tone: Tone; text: string }> = {
+  no_longer_reported: { tone: "ok", text: "no longer reported" },
+  still_reported: { tone: "bad", text: "still reported" },
+  not_attempted: { tone: "neutral", text: "not attempted" },
+};
+
+function SevCounts({ counts }: { counts: Record<string, number> }) {
+  const parts = SEV_ORDER.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`);
+  return <span className="small muted">{parts.join(" · ") || "none"}</span>;
+}
+
+export function SecurityFixesTab({ job }: { job: Job }) {
+  const rem = job.results.remediation;
+  const { setOpen, modal } = useFile(job.id);
+  if (!rem) return <Empty title="No security fixes">Security fixes run in full analyses and security scans when there are code vulnerabilities or exposed secrets to fix.</Empty>;
+  const st = REM_STATUS[rem.status] ?? REM_STATUS.unavailable;
+  if (rem.status === "not_needed" || (rem.status === "unavailable" && !rem.diff)) {
+    return <Empty title={st.text}>{rem.summary}</Empty>;
+  }
+  const rs = job.results.risk_score;
+  const ta = rem.tests_after, tb = rem.tests_before;
+  const cleared = rem.targets.filter((t) => t.outcome === "no_longer_reported").length;
+  const diffName = `patchpilot-${job.id}-security-fixes.diff`;
+  return (
+    <div className="stack">
+      {modal}
+      <div className={`card rem-head rem-${st.tone}`}>
+        <div className="card-head">
+          <h2>{st.text}</h2><Src kind="tool" /><Badge tone="outline">applied to a copy · your repository is not modified</Badge>
+        </div>
+        <div className="small">{rem.summary}</div>
+        {rem.reasons.length > 0 && <List items={rem.reasons} />}
+        <div className="proof-metrics" style={{ marginTop: 12 }}>
+          <div className="proof-metric"><div className="k">Targeted findings cleared</div>
+            <div className="v">{cleared} / {rem.targets.length}</div><div className="small muted">same scanner re-ran on the fixed copy</div></div>
+          <div className="proof-metric"><div className="k">All findings (every scanner)</div>
+            <div className="v">{rem.findings_before} → {rem.findings_after_count}</div>
+            <div><SevCounts counts={rem.severity_after} /></div></div>
+          <div className="proof-metric"><div className="k">Tests on the fixed copy</div>
+            <div className="v">{ta && ta.status === "completed" ? `${ta.passed}/${ta.passed + ta.failed + ta.errors}` : "not run"}</div>
+            <div className="small muted">{ta && tb ? `before: ${tb.passed} passing · regressions: ${rem.new_failures.length}` : "tick “I trust this repository” to run tests"}</div></div>
+          {rs?.after_remediation && (
+            <div className="proof-metric"><div className="k">Risk score</div>
+              <div className="v">{rs.before.score} → {rs.after_remediation.score}</div><div className="small muted">{rs.after_remediation.rating}</div></div>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head"><h2>Findings PatchPilot tried to fix</h2><Src kind="mixed" /></div>
+        <div className="table-wrap"><table>
+          <thead><tr><th>Finding</th><th>Location</th><th>Severity</th><th>After the fix</th><th>What changed (Claude)</th></tr></thead>
+          <tbody>{rem.targets.map((t) => (
+            <tr key={t.finding_id}>
+              <td><strong>{t.title}</strong><div className="small muted mono">{t.scanner} · {t.rule_id}</div></td>
+              <td><Loc path={t.file_path ?? undefined} line={t.line} onOpen={t.file_path ? () => setOpen({ path: t.file_path!, hl: t.line ? [t.line, t.line] : undefined }) : undefined} /></td>
+              <td><SeverityBadge severity={t.severity} /></td>
+              <td><Badge tone={OUTCOME[t.outcome].tone}>{OUTCOME[t.outcome].text}</Badge></td>
+              <td className="small">{t.fix_note || <span className="muted">—</span>}</td>
+            </tr>
+          ))}</tbody>
+        </table></div>
+        {rem.also_cleared > 0 && <div className="small muted" style={{ marginTop: 8 }}>{rem.also_cleared} other finding(s) are also no longer reported after these changes.</div>}
+        {rem.introduced.length > 0 && (
+          <div className="alert bad" style={{ marginTop: 10 }}>
+            New finding(s) after the fixes: {rem.introduced.map((f) => `${f.severity} ${f.title} (${f.file_path}:${f.line})`).join(" · ")}
+          </div>
+        )}
+        {rem.follow_ups.length > 0 && (
+          <div className="alert warn" style={{ marginTop: 10 }}>
+            <div><strong>Still needs a human:</strong><List items={rem.follow_ups} /></div>
+          </div>
+        )}
+      </div>
+
+      {rem.diff && (
+        <div className="card">
+          <div className="card-head">
+            <h2>The change</h2><Src kind="tool" /><span className="muted small">{rem.files_changed.length} file(s) · +{rem.lines_added} / −{rem.lines_removed}</span>
+            <span className="spacer" />
+            <a className="btn" href={apiUrl(`/api/jobs/${job.id}/security-fixes.diff`)}><Icon name="download" size={14} /> Download patch</a>
+          </div>
+          <DiffView diff={rem.diff} maxHeight={420} />
+          <div className="subtle small" style={{ marginTop: 10 }}>
+            <strong>Apply on a new branch in your own clone (review it first):</strong>
+            <pre className="block mono" style={{ marginTop: 6 }}>{`git checkout -b patchpilot/security-fixes\ngit apply --reject ${diffName}`}</pre>
+            {rem.redacted_lines > 0
+              ? <>Secret values are masked in this patch, so {rem.redacted_lines} line(s) cannot be applied automatically: <code>--reject</code> applies everything else and saves those parts as <code>.rej</code> files to edit by hand.</>
+              : <>PatchPilot never pushes to GitHub or changes your repository — you decide what to merge.</>}
+          </div>
+        </div>
+      )}
+      <div className="small muted">“No longer reported” means the scanner stopped flagging the code after the fix — not proof that the code is secure. Review every change before merging.</div>
+    </div>
   );
 }
 

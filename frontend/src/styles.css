@@ -461,3 +461,9 @@ td input[type="checkbox"], th input[type="checkbox"] { accent-color: var(--accen
   .ap-arrow { transform: rotate(90deg); justify-content: center; padding: 2px 0; }
   .ap-node { width: auto; }
 }
+
+/* ---------- security fixes ---------- */
+.rem-head { border-left: 4px solid var(--border-strong); }
+.rem-head.rem-ok { border-left-color: var(--ok); }
+.rem-head.rem-warn { border-left-color: var(--warn); }
+.rem-head.rem-bad { border-left-color: var(--bad); }

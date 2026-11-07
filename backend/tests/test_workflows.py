@@ -46,10 +46,10 @@ COMMON = {
 }
 
 
-def _run(settings, sample, part, analysis, bug, llm, allow_local=True, modified=None):
+def _run(settings, sample, part, analysis, bug, llm, allow_local=True, modified=None, remediate=False):
     store = JobStore(settings.db_path)
     orch = Orchestrator(store, settings, llm_factory=lambda s, cb, name: (setattr(llm, "on_usage", cb), llm)[1])
-    job, ws = orch.new_job(sample, analysis, bug, JobOptions(allow_local_execution=allow_local))
+    job, ws = orch.new_job(sample, analysis, bug, JobOptions(allow_local_execution=allow_local, auto_remediate=remediate))
     ws.original.rmdir()
     copy_sample(sample, part, ws.original)
     if modified:

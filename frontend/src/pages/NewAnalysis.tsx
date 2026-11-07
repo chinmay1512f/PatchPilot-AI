@@ -6,11 +6,11 @@ import { Badge, Icon, type IconName } from "../ui";
 const TYPES: { id: AnalysisType; title: string; desc: string; icon: IconName; featured?: boolean }[] = [
   {
     id: "full_analysis", title: "Initiate full analysis", icon: "sparkle", featured: true,
-    desc: "Just add a repository. PatchPilot understands it, audits the code to find bugs on its own, proves the top bug with a failing test, repairs and verifies it, and runs the full security scan.",
+    desc: "Just add a repository. PatchPilot understands it, audits the code to find bugs on its own, proves the top bug with a failing test, repairs and verifies it, runs the full security scan and maps attack paths, then fixes and re-checks the top security findings.",
   },
   { id: "full_repair", title: "Find & fix a bug", desc: "Investigate → reproduce with a real failing test → patch a copy → verify → security scan.", icon: "wrench" },
   { id: "investigate_only", title: "Investigate only", desc: "Root-cause analysis and reproduction without generating a patch.", icon: "search" },
-  { id: "security_scan", title: "Security scan", desc: "Static analysis, secrets, vulnerable dependencies and suspicious-code detection.", icon: "shield" },
+  { id: "security_scan", title: "Security scan", desc: "Static analysis, secrets, vulnerable dependencies, malware indicators and attack paths — plus tested fixes for the top findings.", icon: "shield" },
   { id: "patch_review", title: "Review an AI patch", desc: "Original + modified versions → detect unnecessary or risky changes.", icon: "git" },
 ];
 
@@ -82,6 +82,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
   const [bug, setBug] = useState("");
   const [allowLocal, setAllowLocal] = useState(false);
   const [security, setSecurity] = useState(true);
+  const [autoFix, setAutoFix] = useState(true);
   const [samples, setSamples] = useState<Sample[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -91,7 +92,8 @@ export function NewAnalysis({ health }: { health: Health | null }) {
 
   const isFull = type === "full_analysis";
   const needsBug = type === "full_repair" || type === "investigate_only";
-  const executes = needsBug || isFull;
+  const fixable = isFull || type === "security_scan";  // security fixes run in these analysis types
+  const executes = needsBug || isFull || (fixable && autoFix);
   const showModified = type === "patch_review";
   const docker = health?.execution.docker.available;
   const dl = health?.demo_limits;
@@ -135,6 +137,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
     form.append("bug_description", needsBug || type === "patch_review" ? bug : "");
     form.append("allow_local_execution", String(allowLocal));
     form.append("run_security_scan", String(isFull ? true : security));
+    form.append("auto_remediate", String(fixable && autoFix));
     setBusy(true);
     try {
       const job = await api.createJob(form);
@@ -179,7 +182,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
                 <span className="row" style={{ gap: 8 }}><span className="t">{full.title}</span><Badge tone="accent">Recommended</Badge></span>
                 <span className="d">{full.desc}</span>
                 <span className="chips" style={{ marginTop: 8 }}>
-                  {["Understanding", "Bug discovery", "Reproduction", "Repair", "Verification", "Security scan", "Patch review", "Report"].map((c) => <span key={c} className="mini-chip">{c}</span>)}
+                  {["Understanding", "Bug discovery", "Reproduction", "Repair", "Verification", "Security scan", "Attack paths", "Security fixes", "Risk score", "Report"].map((c) => <span key={c} className="mini-chip">{c}</span>)}
                 </span>
               </span>
             </button>
@@ -236,6 +239,13 @@ export function NewAnalysis({ health }: { health: Health | null }) {
               <input type="checkbox" checked={isFull ? true : security} disabled={isFull} onChange={(e) => setSecurity(e.target.checked)} />
               <div><strong>Run security scanners</strong>{isFull && <Badge tone="accent">always on in full analysis</Badge>}<div className="small muted">Bandit, Semgrep, secret detection, suspicious-code rules and OSV dependency lookups (package names/versions only are sent to osv.dev).</div></div>
             </label>
+            {fixable && (
+              <label className="check">
+                <input type="checkbox" checked={autoFix} onChange={(e) => setAutoFix(e.target.checked)} />
+                <div><strong>Fix the top security findings</strong><Badge tone="accent">auto-remediation</Badge>
+                  <div className="small muted">Claude writes fixes for up to 3 code vulnerabilities or exposed secrets on a copy; then every scanner and the tests re-run to check them. You get a reviewable patch — nothing is applied to your repository or pushed anywhere.</div></div>
+              </label>
+            )}
           </div>
 
           {err && <div className="alert bad">{err}</div>}

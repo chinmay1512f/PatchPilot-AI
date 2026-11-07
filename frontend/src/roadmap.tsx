@@ -63,7 +63,7 @@ export function buildRoadmap(job: Job): RoadmapStep[] {
   const osv = sec?.scanners.find((s) => s.name === "osv");
   if (sec && osv) {
     const n = sec.findings.filter((f) => f.category === "dependency").length;
-    if (osv.status === "completed") deps = { ...deps, status: n ? "warn" : "done", detail: n ? `${plural(n, "known vulnerability")} in dependencies` : "No known-vulnerable dependencies" };
+    if (osv.status === "completed") deps = { ...deps, status: n ? "warn" : "done", detail: n ? `${n} known ${n === 1 ? "vulnerability" : "vulnerabilities"} in dependencies` : "No known-vulnerable dependencies" };
     else if (osv.message.startsWith("no dependency manifests")) deps = { ...deps, status: "done", detail: "No third-party dependencies declared" };
     else deps = { ...deps, status: osv.status === "skipped" ? "skipped" : "failed", detail: osv.message || osv.status };
   } else if (sec) deps = { ...deps, status: "skipped", detail: "Not part of this scan" };
@@ -100,19 +100,29 @@ export function buildRoadmap(job: Job): RoadmapStep[] {
   // 6. AI repair (Agent 4)
   const rep = job.agents.repair;
   let repair: RoadmapStep = { key: "repair", title: "AI Repair", icon: "wrench", ...agentStep(rep, finished), detail: rep?.message || "Waiting for a proven bug" };
-  if (!codeFlow || job.analysis_type === "investigate_only") repair = { ...repair, status: "skipped", detail: "Not part of this analysis type" };
+  const rem = r.remediation && r.remediation.status !== "not_needed" ? r.remediation : null;
+  const remStarted = audit.some((e) => e.message === "security fixes started");
+  const remText = rem ? `security fixes: ${rem.targets.filter((t) => t.outcome === "no_longer_reported").length}/${rem.targets.length} cleared` : "";
+  if ((!codeFlow || job.analysis_type === "investigate_only") && !rem && !remStarted) repair = { ...repair, status: "skipped", detail: "Not part of this analysis type" };
   else if (r.patches.length) {
     const p = r.patches[r.patches.length - 1];
-    repair.detail = `${plural(r.patches.length, "patch attempt")} · ${plural(p.files_changed.length, "file")}, +${p.lines_added}/−${p.lines_removed}`;
-  } else if (repair.status === "running") repair.detail = "Writing a minimal fix on a copy…";
+    repair.detail = `${plural(r.patches.length, "patch attempt")} · ${plural(p.files_changed.length, "file")}, +${p.lines_added}/−${p.lines_removed}` + (remText ? ` · ${remText}` : "");
+  } else if (rem) repair.detail = remText.charAt(0).toUpperCase() + remText.slice(1);
+  else if (repair.status === "running") repair.detail = remStarted ? "Writing fixes for the top security findings…" : "Writing a minimal fix on a copy…";
 
   // 7. Test execution (Agent 3 reproduction + Agent 5 patch verification)
   const repro = job.agents.reproduction;
   const ver = job.agents.verification;
   const v = r.verification;
   let tests: RoadmapStep = { key: "tests", title: "Test Execution", icon: "beaker", status: "pending", detail: "Waiting to start", seconds: secondsBetween(repro?.started_at, repro?.finished_at) };
-  if (!codeFlow) tests = { ...tests, status: "skipped", detail: "Not part of this analysis type" };
-  else if (job.execution_backend === "blocked") tests = { ...tests, status: "blocked", detail: "Execution blocked — no sandbox consent" };
+  const remTests = rem?.tests_after && rem.tests_after.status === "completed" ? rem.tests_after : null;
+  if (!codeFlow && !remStarted) tests = { ...tests, status: "skipped", detail: "Not part of this analysis type" };
+  else if (!codeFlow) {
+    tests = remTests
+      ? { ...tests, status: rem!.new_failures.length ? "failed" : "done", detail: `Security fixes: ${remTests.passed}/${remTests.passed + remTests.failed + remTests.errors} passing, ${plural(rem!.new_failures.length, "regression")}` }
+      : rem ? { ...tests, status: "skipped", detail: "Tests not run on the security fixes" }
+      : { ...tests, status: finished ? "skipped" : "running", detail: "Re-checking the security fixes…" };
+  } else if (job.execution_backend === "blocked") tests = { ...tests, status: "blocked", detail: "Execution blocked — no sandbox consent" };
   else if (v?.patched_run) {
     const pr = v.patched_run;
     const total = pr.passed + pr.failed + pr.errors;
@@ -126,12 +136,14 @@ export function buildRoadmap(job: Job): RoadmapStep[] {
               detail: `Baseline ${b.passed} passed, ${b.failed} failed` + (reproduced ? " · bug reproduced" : "") };
     if (finished && tests.status === "pending") tests.status = "skipped";
   } else if (finished) tests = { ...tests, status: repro?.status === "blocked" ? "blocked" : "skipped", detail: repro?.message || "Not run" };
+  if (codeFlow && remTests && tests.status !== "running") tests.detail += ` · security fixes: ${plural(rem!.new_failures.length, "regression")}`;
 
   // 8. Final security report (Agent 6)
   const fin = job.agents.reporting;
   const report: RoadmapStep = { key: "report", title: "Final Security Report", icon: "file", ...agentStep(fin, finished), detail: fin?.message || "Waiting for the other steps" };
   const rs = r.risk_score;
-  if (r.report) report.detail = rs ? `Risk score ${rs.before.score}${rs.after ? ` → ${rs.after.score}` : ""}/100 · report ready` : "Report ready";
+  const lastScore = rs?.after_remediation ?? rs?.after;
+  if (r.report) report.detail = rs ? `Risk score ${rs.before.score}${lastScore ? ` → ${lastScore.score}` : ""}/100 · report ready` : "Report ready";
 
   return [upload, security, deps, bugs, attack, repair, tests, report];
 }

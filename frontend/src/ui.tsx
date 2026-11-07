@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 
-type Tone = "ok" | "warn" | "bad" | "info" | "violet" | "neutral" | "accent" | "outline";
+export type Tone = "ok" | "warn" | "bad" | "info" | "violet" | "neutral" | "accent" | "outline";
 
 const STATUS_TONE: Record<string, Tone> = {
   completed: "ok", verified: "ok", reproduced: "ok", fixed: "ok", appears_minimal: "ok",
