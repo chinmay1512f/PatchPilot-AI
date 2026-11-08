@@ -97,6 +97,8 @@ export function NewAnalysis({ health }: { health: Health | null }) {
   const executes = needsBug || isFull || (fixable && autoFix);
   const showModified = type === "patch_review";
   const docker = health?.execution.docker.available;
+  // false on the hosted demo: its sandbox runs test code as a separate low-privilege user
+  const consentNeeded = health?.execution.local_restricted.requires_consent !== false;
   const dl = health?.demo_limits;
   const demoNote = dl ? "Public demo: " + [
     dl.per_hour ? `up to ${dl.per_hour} analyses per hour` : "",
@@ -229,10 +231,12 @@ export function NewAnalysis({ health }: { health: Health | null }) {
               {docker ? (
                 <>Docker sandbox available: tests run in a container with <strong>no network</strong>, dropped capabilities, and memory/CPU/process limits.</>
               ) : (
-                <>No Docker sandbox on this server. Untrusted code is <strong>not executed</strong> unless you explicitly trust this repository below; static analysis always runs.</>
+                consentNeeded
+                  ? <>No Docker sandbox on this server. Untrusted code is <strong>not executed</strong> unless you explicitly trust this repository below; static analysis always runs.</>
+                  : <>Tests run automatically in this server's <strong>sandbox</strong>: the repository's code runs as a separate low-privilege user that cannot see the API key or other analyses, with time, memory and process limits and network access blocked (best effort). Your own repository is never modified.</>
               )}
             </div>
-            {!docker && (executes || needsBug || isFull) && (
+            {!docker && consentNeeded && (executes || needsBug || isFull) && (
               <label className="check warn">
                 <input type="checkbox" checked={allowLocal} onChange={(e) => setAllowLocal(e.target.checked)} />
                 <div>
@@ -256,7 +260,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
 
           {err && <div className="alert bad">{err}</div>}
           {demoNote && <div className="alert info">{demoNote}</div>}
-          {isFull && !docker && !allowLocal && (
+          {isFull && !docker && consentNeeded && !allowLocal && (
             <div className="alert warn">Tick “I trust this repository” above so agents 3–5 can run tests. Without it, bugs can still be found but not proven, fixed and verified.</div>
           )}
           <div className="row">

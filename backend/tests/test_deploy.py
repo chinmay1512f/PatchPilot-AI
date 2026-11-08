@@ -115,6 +115,27 @@ def test_cors_allows_configured_frontend_only(tmp_path):
             assert (r.headers.get("access-control-allow-origin") == origin) is allowed, origin
 
 
+def test_automatic_test_runs_only_with_an_isolated_sandbox_user(tmp_path, monkeypatch):
+    """The hosted demo may skip the per-analysis consent, but only where test code runs as a separate
+    low-privilege user on a POSIX host; everywhere else consent stays required."""
+    import app.config as config
+    s = Settings(data_dir=tmp_path / "d", execution_consent_required=False)
+    assert s.execution_needs_consent()  # no sandbox user: setting ignored
+    s.sandbox_uid = 10001
+    monkeypatch.setattr(config.os, "name", "nt")
+    assert s.execution_needs_consent()  # Windows (a developer's machine): setting ignored
+    monkeypatch.setattr(config.os, "name", "posix")
+    assert not s.execution_needs_consent()  # Linux container with the sandbox user: allowed
+    assert Settings(data_dir=tmp_path / "e", sandbox_uid=10001).execution_needs_consent()  # default: consent required
+
+
+def test_health_reports_consent_requirement(tmp_path):
+    client, _ = _client(tmp_path)
+    with client:
+        lr = client.get("/api/health").json()["execution"]["local_restricted"]
+        assert lr["requires_consent"] is True and lr["isolated_user"] is False
+
+
 @pytest.mark.skipif(os.name == "nt" or (hasattr(os, "geteuid") and os.geteuid() == 0), reason="POSIX non-root only")
 def test_sandbox_user_fails_closed_without_root(tmp_path):
     from app.tools.sandbox import LocalRestrictedBackend

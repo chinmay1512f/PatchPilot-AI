@@ -152,7 +152,7 @@ export interface Stats {
 }
 export interface Health {
   model: string; llm_mode: string; api_key_configured: boolean; fast_mode?: boolean;
-  execution: { preference: string; docker: { available: boolean; detail: string }; local_restricted: { available: boolean; requires_consent: boolean } };
+  execution: { preference: string; docker: { available: boolean; detail: string }; local_restricted: { available: boolean; requires_consent: boolean; isolated_user?: boolean } };
   scanners: Record<string, boolean>; limits: { max_upload_mb: number; sandbox_timeout_seconds: number; max_repair_attempts: number };
   /** Public-demo usage limits; null when the server has none (local runs). 0 = no limit for that window. */
   demo_limits?: { per_hour: number; per_day: number; concurrent: number; used_hour: number; used_day: number } | null;

@@ -33,6 +33,7 @@ COPY data/recordings/demo-buggy-shop.json data/recordings/demo-buggy-shop.json
 
 ENV PATCHPILOT_DATA_DIR=/app/data \
     PATCHPILOT_SANDBOX_UID=10001 \
+    PATCHPILOT_EXECUTION_CONSENT_REQUIRED=false \
     PATCHPILOT_EXECUTION_BACKEND=auto \
     PORT=8000
 

@@ -165,7 +165,7 @@ class Orchestrator:
         ws = Workspace(self.s.workspaces_dir, job_id)
         try:
             llm = self.llm_factory(self.s, self._usage_cb(job_id), job_id)
-            backend = select_backend(self.s, job.options.allow_local_execution)
+            backend = select_backend(self.s, job.options.allow_local_execution or not self.s.execution_needs_consent())
         except Exception as e:  # noqa: BLE001 — never leave a job stuck in "pending"
             err = f"Could not start analysis: {e}"
             self._set(job_id, lambda j: (setattr(j, "status", StageStatus.failed), setattr(j, "error", err)))

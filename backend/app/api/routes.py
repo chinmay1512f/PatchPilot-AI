@@ -80,7 +80,8 @@ def health(request: Request):
         "llm_mode": s.llm_mode,
         "api_key_configured": s.api_key_configured(),
         "execution": {"preference": s.execution_backend, "docker": {"available": docker_ok, "detail": docker_msg},
-                      "local_restricted": {"available": True, "requires_consent": True}},
+                      "local_restricted": {"available": True, "requires_consent": s.execution_needs_consent(),
+                                           "isolated_user": bool(s.sandbox_uid)}},
         "scanners": {name: bool(_which(name)) for name in ("bandit", "semgrep", "ruff", "gitleaks", "osv-scanner", "trivy")}
         | {"osv_api": s.osv_enabled, "builtin_secrets": True, "builtin_suspicious": True},
         "limits": {"max_upload_mb": s.max_upload_mb, "max_extracted_mb": s.max_extracted_mb, "max_files": s.max_files,

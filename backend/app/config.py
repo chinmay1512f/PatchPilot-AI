@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # switch to it). Used on public deployments so test code cannot read the server's environment
     # (e.g. the API key via /proc). 0 = off (local development).
     sandbox_uid: int = 0
+    # On a disposable server whose sandbox runs test code as that separate low-privilege user (the Docker
+    # image used on Render), tests may run without the per-analysis "I trust this repository" consent.
+    # Ignored — consent stays required — unless sandbox_uid is active on a POSIX host, so a developer's
+    # own machine is never affected.
+    execution_consent_required: bool = True
 
     # --- Public demo protection (0 = no limit). In-memory, so the counters reset on restart. ---
     max_jobs_per_hour: int = 0
@@ -114,6 +119,10 @@ class Settings(BaseSettings):
     @property
     def recordings_dir(self) -> Path:
         return self.data_dir / "recordings"
+
+    def execution_needs_consent(self) -> bool:
+        isolated = bool(self.sandbox_uid) and os.name != "nt"
+        return self.execution_consent_required or not isolated
 
     def api_key_configured(self) -> bool:
         return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))

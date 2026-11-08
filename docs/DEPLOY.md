@@ -67,5 +67,6 @@ Push to `main` on GitHub — Render and Vercel both redeploy automatically.
 There is no Docker-in-Docker on Render, so the **local restricted** sandbox is used, hardened for a shared server:
 
 * Untrusted test code runs as a separate unprivileged user (`sandbox`, uid 10001) — it cannot read the server process's environment (the API key), the job database or other jobs' files.
+* Because of that separation, the Docker image sets `PATCHPILOT_EXECUTION_CONSENT_REQUIRED=false`: on this disposable server tests run without the per-analysis "I trust this repository" tick. The setting is ignored (consent stays required) unless the sandbox user is active on Linux, so running PatchPilot on your own machine always asks first.
 * CPU/memory/process/file-size limits, a timeout, a scrubbed environment and a best-effort in-process network block.
 * It is still **not** a hard isolation boundary like a dedicated VM or container per run; only analyse repositories you are willing to execute. Static scans (Bandit, Semgrep, secrets, OSV, malware indicators) never execute the code.
