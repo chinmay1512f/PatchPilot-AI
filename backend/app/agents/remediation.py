@@ -162,8 +162,8 @@ def _new_lint(ctx: AgentContext, work: Path, changed: list[str]) -> list[str]:
 def run(ctx: AgentContext, security: SecurityReport, baseline: TestRun | None) -> Remediation:
     picked = select_targets(security, ctx.settings.remediation_max_findings)
     if not picked:
-        return Remediation(status="not_needed", summary="No code vulnerabilities or exposed secrets that PatchPilot can safely fix "
-                           "automatically (dependency upgrades and suspicious-code findings are left for a human).")
+        return Remediation(status="not_needed", summary="Nothing here can be fixed safely and automatically. Outdated borrowed packages "
+                           "and suspicious-looking code are left for a person to decide.")
     ok, why = ctx.llm.available()
     if not ok:
         return Remediation(status="unavailable", summary=why, targets=[_target(f) for f in picked])
@@ -191,7 +191,7 @@ def run(ctx: AgentContext, security: SecurityReport, baseline: TestRun | None) -
         t.fix_note = notes.get(t.finding_id) or (f"Not attempted: {skips[t.finding_id]}" if t.finding_id in skips else "")
     ctx.log("repair", f"security fixes: {len(draft.edits)} edit(s), +{rem.lines_added}/-{rem.lines_removed} in {rem.files_changed}; errors={errors}")
     if not changes:
-        rem.reasons.append("The proposed fixes could not be applied, so nothing changed." if errors else "Claude proposed no change.")
+        rem.reasons.append("The suggested fixes did not match the code, so nothing was changed." if errors else "Claude did not suggest any change.")
         return rem
 
     # Agent 5: every scanner and the tests on the fixed copy, at the same time.
@@ -256,29 +256,30 @@ def _decide(rem: Remediation, draft: RemediationDraft) -> None:
                               "and they stay in the git history.")
     if rem.new_failures:
         rem.status = "failed"
-        rem.reasons.append(f"The fixes broke {len(rem.new_failures)} test(s) that passed before.")
+        rem.reasons.append(f"The fixes broke something: {len(rem.new_failures)} test(s) that passed before now fail.")
     elif serious_new:
         rem.status = "failed"
-        rem.reasons.append(f"The fixes introduced {len(serious_new)} new high/critical finding(s).")
+        rem.reasons.append(f"The fixes created {len(serious_new)} new serious (high or critical) security problem(s).")
     elif not cleared:
         rem.status = "failed"
-        rem.reasons.append("The scanners still report every targeted finding after the fixes.")
+        rem.reasons.append("The security checkers still flag every problem PatchPilot tried to fix.")
     elif not ta or ta.status != "completed":
         rem.status = "untested"
         rem.reasons.append("Tests were not run on the fixed copy " + (f"({ta.blocked_reason or ta.status})" if ta else
-                           "(execution not allowed or no working test suite)") + ", so only the scanners checked these fixes.")
+                           "(running the code was not allowed, or the project has no working tests)")
+                           + ", so only the security checkers confirmed these fixes — not whether the app still works.")
     elif len(cleared) < len(rem.targets) or rem.apply_errors:
         rem.status = "partial"
-        rem.reasons.append(f"{len(cleared)} of {len(rem.targets)} targeted finding(s) are no longer reported; the rest still need attention.")
+        rem.reasons.append(f"{len(cleared)} of {len(rem.targets)} problem(s) PatchPilot tried to fix are no longer flagged; the rest still need attention.")
     else:
         rem.status = "verified"
-        rem.reasons.append("Every targeted finding is no longer reported by its scanner, and the test suite shows no regressions. "
-                           "Verified against these checks only — review the change before merging.")
+        rem.reasons.append("The security checkers no longer flag any of the problems PatchPilot fixed, and every test that passed "
+                           "before still passes. This is checked with these tools only — have a person review the change before using it.")
     minor_new = [f for f in rem.introduced if f.severity not in SERIOUS]
     if minor_new and rem.status != "failed":
-        rem.reasons.append(f"The re-scan also reports {len(minor_new)} new lower-severity finding(s) in the changed code "
-                           f"({', '.join(sorted({f.rule_id for f in minor_new}))}); review them below.")
-    tests = f"tests {ta.passed}/{ta.passed + ta.failed + ta.errors} passing" if ta and ta.status == "completed" else "tests not run"
-    rem.summary = (f"{len(cleared)} of {len(rem.targets)} targeted finding(s) no longer reported · {tests}"
-                   + (f" · {len(rem.introduced)} new finding(s)" if rem.introduced else "")
+        rem.reasons.append(f"The re-check also flags {len(minor_new)} new minor issue(s) in the changed code "
+                           f"({', '.join(sorted({f.rule_id for f in minor_new}))}); they are listed below for review.")
+    tests = f"tests: {ta.passed} of {ta.passed + ta.failed + ta.errors} passing" if ta and ta.status == "completed" else "tests not run"
+    rem.summary = (f"{len(cleared)} of {len(rem.targets)} problem(s) fixed (no longer flagged by the security checkers) · {tests}"
+                   + (f" · {len(rem.introduced)} new issue(s) flagged" if rem.introduced else "")
                    + (f". {draft.summary}" if draft.summary else ""))

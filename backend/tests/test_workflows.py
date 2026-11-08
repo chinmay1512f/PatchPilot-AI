@@ -283,7 +283,7 @@ def test_security_lane_runs_in_parallel_with_agent_chain(settings):
     understanding_done = next(i for i, (a, m) in enumerate(msgs) if a == "repo_understanding" and m.startswith("stage completed"))
     assert lane_start < understanding_done  # started before Agent 1 finished
     assert job.agents["verification"].lane == "parallel"
-    assert any("[parallel lane] Security scan done" in m for _, m in msgs)
+    assert any("[parallel lane] Security scan finished" in m for _, m in msgs)
     assert job.results.security is not None and job.results.verification.status == "verified"
 
 

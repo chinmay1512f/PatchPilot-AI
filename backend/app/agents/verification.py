@@ -387,27 +387,28 @@ def verify_patch(ctx: AgentContext, patch: PatchProposal, patched: Path, repro: 
     # 7. status from evidence only
     serious = [f for f in res.patch_security_findings if f.severity in (Severity.critical, Severity.high)]
     if res.syntax_errors:
-        res.status, res.reasons = VerificationStatus.failed, ["Patched files contain syntax errors."]
+        res.status, res.reasons = VerificationStatus.failed, ["The fixed code cannot run: it contains syntax errors (typing mistakes that stop Python from reading the file)."]
     elif blocked:
-        res.status, res.reasons = VerificationStatus.blocked, [res.patched_run.blocked_reason or "Test execution was blocked."]
+        res.status, res.reasons = VerificationStatus.blocked, [res.patched_run.blocked_reason or "The tests were not allowed to run, so the fix could not be checked."]
     elif res.original_bug_status == "not_fixed":
-        res.status, res.reasons = VerificationStatus.failed, ["The reproduction test still fails on the patched code."]
+        res.status, res.reasons = VerificationStatus.failed, ["The fix did not work: the reproduction test still fails on the patched code (the test written to prove the bug)."]
     elif res.new_failures:
-        res.status, res.reasons = VerificationStatus.failed, [f"{len(res.new_failures)} previously passing test(s) now fail."]
+        res.status, res.reasons = VerificationStatus.failed, [f"The fix broke something else: {len(res.new_failures)} test(s) that passed before now fail (a regression)."]
     elif serious:
-        res.status, res.reasons = VerificationStatus.failed, [f"Patch introduces {len(serious)} high/critical security finding(s)."]
+        res.status, res.reasons = VerificationStatus.failed, [f"The fix creates a new security problem: {len(serious)} high or critical finding(s) in the changed code."]
     elif res.patched_run.status not in ("completed",):
-        res.status, res.reasons = VerificationStatus.incomplete, [f"Test suite status after patch: {res.patched_run.status}."]
+        res.status, res.reasons = VerificationStatus.incomplete, [f"The tests could not finish on the fixed code (status: {res.patched_run.status}), so the fix is not confirmed."]
     elif res.original_bug_status != "fixed":
-        res.status, res.reasons = VerificationStatus.inconclusive, ["The original bug was not reproduced by a failing test, so the fix cannot be confirmed by execution."]
+        res.status, res.reasons = VerificationStatus.inconclusive, ["No test showed the original bug happening, so running the code cannot prove that the fix works."]
     else:
         res.status = VerificationStatus.verified
         res.reasons = [
-            "Reproduction test failed before the patch and passes after it.",
-            f"Full suite after patch: {res.patched_run.passed} passed, {res.patched_run.failed} failed, {res.patched_run.errors} errors; no regressions versus baseline"
-            + (f" (the {len(res.patched_run.failing_ids & baseline_run.failing_ids)} failing/erroring test(s) already failed before the patch)."
+            "The bug is gone: the test that proved it failed before the fix and passes after it.",
+            f"Nothing else broke: on the fixed code the full test suite gave {res.patched_run.passed} passed, {res.patched_run.failed} failed, "
+            f"{res.patched_run.errors} errors, and no test that passed before now fails"
+            + (f" (the {len(res.patched_run.failing_ids & baseline_run.failing_ids)} failing test(s) were already failing before the fix)."
                if baseline_run and res.patched_run.failing_ids & baseline_run.failing_ids else "."),
-            "No new high/critical security findings in changed files.",
+            "No new serious security problems (high or critical findings) in the changed files.",
         ]
     return res
 

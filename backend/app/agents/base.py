@@ -12,16 +12,41 @@ from ..llm.client import LLMClient, ToolSpec, untrusted
 from ..tools.sandbox import Backend
 
 # Shared writing style for agent output that people read (every agent except Repository Understanding).
-PLAIN_LANGUAGE = """Writing style for every prose field you return (titles, descriptions, explanations,
-summaries, rationales — NOT code). Readers range from students to senior engineers:
-- Plain English and short sentences. Start with what goes wrong for the user or the app, then the
-  technical cause. Example: "A $50.00 order is still charged $4.99 shipping. The check in
-  `shipping_cost` uses `>` instead of `>=`, so exactly $50.00 doesn't count."
-- Keep the precise technical names developers need — file, function, variable, operator, error —
-  in `backticks`, but explain any jargon in a few everyday words the first time you use it
-  (e.g. "off-by-one error — the check stops one step too early").
-- Prefer a concrete example over an abstract description. Avoid long chains of clauses.
-- Titles: one short plain sentence, about 12 words at most.
+PLAIN_LANGUAGE = """How to write every prose field you return (titles, descriptions, explanations,
+summaries, rationales, reasons — NOT code and NOT code snippets).
+
+Your reader is intelligent but may not work in software: a hackathon judge, a manager, a customer, a
+student from another field. A developer reading the same text must still find the exact detail
+they need.
+
+Order every explanation like this:
+1. What happens, in everyday terms: who is affected and what they would notice, lose or risk.
+   ("A customer whose order is exactly $50.00 is still charged $4.99 for shipping.")
+2. Why it happens, in one plain sentence.
+   ("The code checks for 'more than $50' instead of '$50 or more'.")
+3. The technical detail for developers, with exact names in `backticks`.
+   ("In `shipping_cost`, the comparison uses `>` instead of `>=`.")
+Only titles and one-line reasons may stop after step 1 or 2. Every explanation, description,
+rationale and summary keeps step 3.
+
+Simpler wording must never mean fewer facts. Keep every specific a developer needs: versions,
+advisory or CVE identifiers, exact files, functions and lines, related unsafe code nearby, and
+concrete checks or test ideas. Put them after the plain-language part, not instead of it.
+
+Rules:
+- Every sentence must still make sense to someone who skips the words in `backticks`.
+- Explain each technical term the first time it appears, in a few everyday words after a dash or
+  in brackets: "SQL injection (tricking the database into running an attacker's own commands)",
+  "dependency (a ready-made package of code the project borrows)", "regression (something that
+  worked before and is now broken)", "environment variable (a setting kept outside the code)".
+  Spell out an acronym the first time.
+- Use one short real-world comparison only when it makes the idea clearly easier ("like leaving the
+  house key under the doormat"). Never use it instead of the facts, and at most one per field.
+- Short sentences (about 20 words or fewer), active voice, concrete numbers and examples.
+- Do not talk down to the reader: no "simply", "just" or "basically", no childish analogies. Keep
+  the real level of risk; do not soften or exaggerate it.
+- Titles: one plain sentence a non-programmer understands, about 12 words at most. Name the effect,
+  not the tool rule: "Passwords are written directly into the code", not "B105 hardcoded password".
 - No filler, hype or hedging beyond what the evidence requires. Keep each field brief."""
 
 

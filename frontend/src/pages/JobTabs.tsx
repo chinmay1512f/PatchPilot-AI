@@ -39,32 +39,32 @@ function ProofCard({ job }: { job: Job }) {
   const a = v.patched_run;
   const ok = v.status === "verified";
   const bad = v.status === "failed";
-  const title = ok ? "Bug fixed — patch verified" : bad ? "Patch did not pass verification" : `Verification ${label(v.status)}`;
+  const title = ok ? "Bug fixed — and proven by running the tests" : bad ? "The fix did not pass the checks" : `Fix not confirmed (${label(v.status)})`;
   return (
     <div className={`card proof ${ok ? "" : bad ? "failed" : "neutral"}`}>
       <div className="proof-head">
         <div className="proof-icon"><Icon name={ok ? "check" : bad ? "x" : "alert"} size={24} /></div>
         <div style={{ flex: 1 }}>
           <div className="row"><h2 style={{ fontSize: 19 }}>{title}</h2><Src kind="tool" /></div>
-          <div className="muted" style={{ marginTop: 2 }}>{v.reasons[0] ?? ""}{ok && " Verified against the configured checks — not a claim that the code is bug-free."}</div>
+          <div className="muted" style={{ marginTop: 2 }}>{v.reasons[0] ?? ""}{ok && " Proven with these tests only — not a promise that the code has no other bugs."}</div>
         </div>
         {patch && <a className="btn" href={apiUrl(`/api/jobs/${job.id}/patch.diff?attempt=${patch.attempt}`)}><Icon name="download" size={14} /> Download patch</a>}
       </div>
       <div className="proof-metrics">
         <div className="proof-metric">
-          <div className="k">Reproduction test</div>
+          <div className="k" title="A new test written to show the bug: it should fail before the fix and pass after it">Test that shows the bug</div>
           <div className="v">{before ? <span className="pill-fail">{before.failed} failing</span> : "—"}<span className="arrow">→</span>{after ? <span className={after.failed ? "pill-fail" : "pill-pass"}>{after.failed ? `${after.failed} failing` : `${after.passed} passing`}</span> : "—"}</div>
         </div>
         <div className="proof-metric">
-          <div className="k">Full test suite</div>
+          <div className="k" title="All of the project's existing tests, run before and after the fix">All tests</div>
           <div className="v">{b ? `${b.passed}/${b.passed + b.failed + b.errors}` : "—"}<span className="arrow">→</span>{a ? <span className={a.failed + a.errors ? "pill-fail" : "pill-pass"}>{a.passed}/{a.passed + a.failed + a.errors}</span> : "—"}</div>
         </div>
         <div className="proof-metric">
-          <div className="k">Regressions</div>
+          <div className="k" title="Tests that passed before the fix and fail after it">Things the fix broke</div>
           <div className="v"><span className={v.new_failures.length ? "pill-fail" : "pill-pass"}>{v.new_failures.length}</span></div>
         </div>
         <div className="proof-metric">
-          <div className="k">Patch size</div>
+          <div className="k" title="Lines added and removed by the fix">Size of the fix</div>
           <div className="v">{patch ? <><span className="pill-pass">+{patch.lines_added}</span><span className="pill-fail">−{patch.lines_removed}</span><span className="muted small" style={{ fontWeight: 500 }}>{patch.files_changed.length} file{patch.files_changed.length === 1 ? "" : "s"}{r.patches.length > 1 ? ` · attempt ${patch.attempt}` : ""}</span></> : "—"}</div>
         </div>
       </div>

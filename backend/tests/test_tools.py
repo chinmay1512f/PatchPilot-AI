@@ -260,11 +260,14 @@ def test_collection_error_shows_real_reason(tmp_path):
 
 
 def test_plain_language_style_applies_to_all_agents_but_repo_understanding():
-    from app.agents import bug_investigation, patch_scope, repair, repo_understanding, reporting, reproduction, verification
+    from app.agents import (attack_paths, bug_investigation, patch_scope, remediation, repair, repo_understanding, reporting,
+                            reproduction, verification)
+    marker = "Your reader is intelligent but may not work in software"  # written for non-technical readers too
     for prompt in (bug_investigation.SYSTEM, bug_investigation.SYSTEM_DISCOVERY, patch_scope.SYSTEM, repair.SYSTEM,
-                   reporting.SYSTEM, reproduction.SYSTEM, verification.TRIAGE_SYSTEM, verification.INTERPRET_SYSTEM):
-        assert "Plain English and short sentences" in prompt
-    assert "Plain English" not in repo_understanding.SYSTEM
+                   reporting.SYSTEM, reproduction.SYSTEM, verification.TRIAGE_SYSTEM, verification.INTERPRET_SYSTEM,
+                   verification.MALWARE_SYSTEM, attack_paths.SYSTEM, remediation.SYSTEM):
+        assert marker in prompt
+    assert marker not in repo_understanding.SYSTEM  # repository understanding stays technical
 
 
 # --------------------------------------------------------------------------- malware indicators

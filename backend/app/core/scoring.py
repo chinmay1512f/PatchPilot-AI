@@ -47,17 +47,17 @@ def _ran(report: SecurityReport, names: set[str]) -> bool:
 def _findings_part(key: str, findings: list[SecurityFinding], assessed: bool, what: str) -> ScoreComponent:
     part = ScoreComponent(key=key, label=LABELS[key], max_points=MAX[key], assessed=assessed)
     if not assessed:
-        part.detail = f"Not assessed: {what} did not run."
+        part.detail = f"Not checked: {what} did not run."
         return part
     points = sum(SEVERITY_POINTS[f.severity] * CONFIDENCE_WEIGHT[f.confidence] for f in findings)
     part.deduction = round(min(MAX[key], points), 1)
     if not findings:
-        part.detail = f"No findings from {what}."
+        part.detail = f"No problems found by {what}."
     else:
         counts = Counter(f.severity for f in findings)
-        part.detail = f"{len(findings)} finding(s) from {what}: " + ", ".join(f"{counts[s]} {s.value}" for s in Severity if counts[s])
+        part.detail = f"{len(findings)} problem(s) found by {what}: " + ", ".join(f"{counts[s]} {s.value}" for s in Severity if counts[s])
         if points > MAX[key]:
-            part.detail += f" (capped at {MAX[key]} points)"
+            part.detail += f" (capped: this part has already lost all {MAX[key]} of its points)"
     return part
 
 
@@ -65,7 +65,7 @@ def _code_quality_part(cq: CodeQualitySummary | None, extra_issues: list[str] = 
     part = ScoreComponent(key="code_quality", label=LABELS["code_quality"], max_points=MAX["code_quality"])
     if cq is None or cq.status != "completed":
         part.assessed = False
-        part.detail = "Not assessed: " + ("no Python code to lint." if cq and cq.status == "not_applicable" else "the Ruff linter did not run.")
+        part.detail = "Not checked: " + ("there is no Python code to check." if cq and cq.status == "not_applicable" else "the automatic code checker (Ruff) did not run.")
         return part
     extra_codes = [e.split(": ", 1)[1].split(" ", 1)[0] if ": " in e else "" for e in extra_issues]
     severe = cq.severe + sum(1 for c in extra_codes if c == "syntax" or c.startswith(LINT_SEVERE))
@@ -74,8 +74,8 @@ def _code_quality_part(cq: CodeQualitySummary | None, extra_issues: list[str] = 
     points = 2.0 * severe + (MAX["code_quality"] - 2) * min(1.0, density / LINT_DENSITY_FOR_MAX)
     part.deduction = round(min(MAX["code_quality"], points), 1)
     total = cq.issues + len(extra_issues)
-    part.detail = (f"{total} correctness lint issue(s) in {cq.python_lines:,} lines of Python"
-                   + (f", {severe} serious (syntax errors / undefined names)" if severe else "")
+    part.detail = (f"{total} likely coding mistake(s) found by the automatic checker (Ruff) in {cq.python_lines:,} lines of Python"
+                   + (f", {severe} serious (code that cannot run or uses names that do not exist)" if severe else "")
                    + ("" if total else " — none found") + ".")
     return part
 
@@ -85,7 +85,7 @@ def _verification_before(r: JobResults) -> ScoreComponent:
     rep = r.reproduction
     if rep and rep.status == "reproduced":
         part.deduction = MAX["verification"]
-        part.detail = "A failing test proves a bug in the original code."
+        part.detail = "A failing test proves the original code has a bug."
         return part
     base: TestRun | None = (rep.baseline_run if rep else None) or (r.verification.baseline_run if r.verification else None)
     total = (base.passed + base.failed + base.errors) if base else 0
@@ -95,20 +95,20 @@ def _verification_before(r: JobResults) -> ScoreComponent:
         part.detail = f"{bad} of {total} existing tests fail on the original code." if bad else f"All {total} existing tests pass; no bug was proven."
         return part
     part.assessed = False
-    part.detail = "Not assessed: no tests were run (none found, execution not allowed, or blocked)."
+    part.detail = "Not checked: no tests were run (the project has none, running the code was not allowed, or it was blocked)."
     return part
 
 
 def _verification_after(v: VerificationResult) -> ScoreComponent:
     part = ScoreComponent(key="verification", label=LABELS["verification"], max_points=MAX["verification"])
     if v.status == VerificationStatus.verified:
-        part.detail = "Patch verified: the reproduction test now passes and the full suite passes with no regressions."
+        part.detail = "The fix is proven: the test that showed the bug now passes, and nothing that worked before broke."
     elif v.status == VerificationStatus.failed:
         part.deduction = MAX["verification"]
-        part.detail = "Patch failed verification" + (f": {v.reasons[0]}" if v.reasons else ".")
+        part.detail = "The fix did not pass the checks" + (f": {v.reasons[0]}" if v.reasons else ".")
     else:
         part.deduction = 8.0
-        part.detail = f"Patch could not be fully verified ({v.status.value})."
+        part.detail = f"The fix could not be fully checked ({v.status.value})."
     return part
 
 
@@ -118,7 +118,7 @@ def _verification_remediation(r: JobResults) -> ScoreComponent:
     ta = r.remediation.tests_after if r.remediation else None
     if not ta or ta.status != "completed":
         part.assessed = False
-        part.detail = "Not assessed: tests were not run on the copy with the security fixes."
+        part.detail = "Not checked: tests were not run on the copy with the security fixes."
         return part
     total = ta.passed + ta.failed + ta.errors
     if r.reproduction and r.reproduction.status == "reproduced":
@@ -156,13 +156,13 @@ def _score(basis: str, parts: list[ScoreComponent]) -> RiskScore | None:
 
 def _security_parts(sec: SecurityReport | None, findings: list[SecurityFinding]) -> list[ScoreComponent]:
     if sec is None:
-        return [ScoreComponent(key=k, label=LABELS[k], max_points=MAX[k], assessed=False, detail="Not assessed: the security scan was not run.")
+        return [ScoreComponent(key=k, label=LABELS[k], max_points=MAX[k], assessed=False, detail="Not checked: the security scan was not run.")
                 for k in ("vulnerabilities", "secrets", "dependencies")]
     return [
         _findings_part("vulnerabilities", [f for f in findings if f.category in VULN_CATEGORIES],
-                       _ran(sec, {"bandit", "semgrep", "patchpilot-suspicious"}), "Bandit, Semgrep and the malware-indicator rules"),
+                       _ran(sec, {"bandit", "semgrep", "patchpilot-suspicious"}), "the code scanners (Bandit, Semgrep) and the malware checks"),
         _findings_part("secrets", [f for f in findings if f.category == "secret"],
-                       _ran(sec, {"patchpilot-secrets", "gitleaks"}), "the secret scanners"),
+                       _ran(sec, {"patchpilot-secrets", "gitleaks"}), "the password-and-key scanners"),
         _dependencies_part(sec, [f for f in findings if f.category == "dependency"]),
     ]
 
@@ -172,10 +172,10 @@ def _dependencies_part(sec: SecurityReport, findings: list[SecurityFinding]) -> 
     if osv and osv.status == "skipped" and osv.message.startswith("no dependency manifests"):
         # Nothing to check is a real result (no third-party code), unlike "could not check".
         return ScoreComponent(key="dependencies", label=LABELS["dependencies"], max_points=MAX["dependencies"],
-                              detail="No third-party dependencies declared (no dependency manifests found).")
-    part = _findings_part("dependencies", findings, _ran(sec, {"osv"}), "the OSV.dev vulnerability lookup")
+                              detail="No third-party dependencies (borrowed code packages) are declared, so there is nothing to check.")
+    part = _findings_part("dependencies", findings, _ran(sec, {"osv"}), "the check of borrowed code packages against known security holes (OSV.dev)")
     if not part.assessed and osv and osv.message:
-        part.detail = f"Not assessed: {osv.message}."
+        part.detail = f"Not checked: {osv.message}."
     return part
 
 

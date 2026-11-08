@@ -247,7 +247,8 @@ class Orchestrator:
                 return None
             done = sum(1 for s in sec.scanners if s.status == "completed")
             malware = f"; malware check: {sec.malware.overall.replace('_', ' ')}" if sec.malware else ""
-            note = f"Security scan done in {time.monotonic() - t0:.0f}s (parallel): {done}/{len(sec.scanners)} scanners, {len(sec.findings)} findings{malware}"
+            note = (f"Security scan finished in {time.monotonic() - t0:.0f}s (alongside the other agents): {done} of {len(sec.scanners)} checkers ran, "
+                    f"{len(sec.findings)} possible problem(s) found{malware}")
 
             def finish(j: Job) -> None:
                 j.results.security = sec
@@ -334,7 +335,7 @@ class Orchestrator:
             self._set(jid, lambda j: setattr(j.results, "repo", repo))
             if repo.narrative_status == "blocked":
                 raise StageBlocked("Index built (tool facts available); AI summary blocked: " + repo.limitations[-1])
-            self._note(jid, "repo_understanding", f"{repo.facts.indexed_files} files indexed; {len(repo.facts.languages)} languages")
+            self._note(jid, "repo_understanding", f"Mapped {repo.facts.indexed_files} files in {len(repo.facts.languages)} programming language(s)")
 
         # Full analysis without a bug report = autonomous mode: Agent 2 audits the code for defects.
         discovery = job.analysis_type == AnalysisType.full_analysis and not job.bug_description.strip()
@@ -345,12 +346,12 @@ class Orchestrator:
             diagnosis = bug_investigation.run(ctx, job.bug_description, repo)
             self._set(jid, lambda j: setattr(j.results, "diagnosis", diagnosis))
             if discovery and not diagnosis.findings:
-                self._note(jid, "bug_investigation", f"code audit ({diagnosis.tool_calls} tool calls) found no defect with enough evidence to report")
+                self._note(jid, "bug_investigation", f"Code audit looked at the code {diagnosis.tool_calls} time(s) and found no defect with enough evidence to report")
             else:
-                kind = "audit" if discovery else "investigation"
-                msg = f"{kind}: {len(diagnosis.findings)} finding(s); {diagnosis.tool_calls} tool calls; {'conclusive' if diagnosis.conclusive else 'inconclusive'}"
+                msg = (f"{'Code audit' if discovery else 'Investigation'} found {len(diagnosis.findings)} possible bug(s) after looking at the code "
+                       f"{diagnosis.tool_calls} time(s); " + ("confident about the main cause" if diagnosis.conclusive else "not confident enough about the main cause"))
                 if not diagnosis.conclusive:
-                    raise StageInconclusive(msg + " — no verified primary defect.")
+                    raise StageInconclusive(msg + " — no main bug could be confirmed in the code.")
                 self._note(jid, "bug_investigation", msg)
 
         # What reproduction and repair work from: the user's report, or the defect the audit found.
@@ -364,7 +365,11 @@ class Orchestrator:
             else:
                 repro = reproduction.run(ctx, bug_text, diagnosis, baseline)
             self._set(jid, lambda j: setattr(j.results, "reproduction", repro))
-            msg = f"reproduction {repro.status}; baseline {baseline.status} ({baseline.passed} passed, {baseline.failed} failed)"
+            msg = {"reproduced": "Bug proven: a new test fails on the current code", "not_reproduced": "Bug not proven: the new test passes on the current code",
+                   "inconclusive": "Could not write a working test that shows the bug", "blocked": "Tests were not allowed to run",
+                   "skipped": "No bug to prove"}.get(repro.status, f"Reproduction: {repro.status}")
+            msg += (f" · existing tests: {baseline.passed} passed, {baseline.failed} failed" if baseline.status == "completed"
+                    else f" · existing tests: {baseline.status}")
             if repro.status == "blocked":
                 raise StageBlocked(msg + ". " + (baseline.blocked_reason or ""))
             if repro.status in ("inconclusive", "not_reproduced"):
@@ -382,7 +387,7 @@ class Orchestrator:
             return
 
         can_repair = bool(diagnosis and (diagnosis.conclusive or (repro and repro.status == "reproduced")))
-        skip_reason = "Root cause not established with enough confidence; repair skipped rather than guessed."
+        skip_reason = "The cause of the bug was not clear enough, so PatchPilot did not guess at a fix."
         if discovery:
             # A defect the AI found on its own is only patched once a failing test proves it is real
             # (or, if execution is blocked, proposed but left unverified).
@@ -413,9 +418,9 @@ class Orchestrator:
             with self._stage(jid, "repair"):
                 patch, patched_dir = repair.run(ctx, bug_text, diagnosis, repro, attempt, history)
                 self._set(jid, lambda j: j.results.patches.append(patch))
-                note = f"attempt {attempt}/{max_attempts}: {len(patch.files_changed)} file(s), +{patch.lines_added}/-{patch.lines_removed}"
+                note = f"Fix attempt {attempt} of {max_attempts}: changed {len(patch.files_changed)} file(s) (+{patch.lines_added} / −{patch.lines_removed} lines)"
                 if patch.apply_errors:
-                    raise StageInconclusive(note + "; could not apply: " + "; ".join(patch.apply_errors)[:300])
+                    raise StageInconclusive(note + "; the fix did not match the code: " + "; ".join(patch.apply_errors)[:300])
                 self._note(jid, "repair", note)
             if patch is None:
                 break  # repair stage itself failed (LLM error etc.)
@@ -430,11 +435,12 @@ class Orchestrator:
                     verification.interpret(ctx, ver, patch, diagnosis)
                     scope = scope_future.result()
                     self._set(jid, lambda j: (setattr(j.results, "verification", ver), setattr(j.results, "patch_scope", scope)))
-                note = f"attempt {attempt}: {ver.status}"
+                note = f"Fix attempt {attempt}: " + {"verified": "proven to work", "failed": "did not pass the checks", "blocked": "could not be checked (tests blocked)",
+                                                     "inconclusive": "could not be confirmed", "incomplete": "the checks did not finish"}.get(ver.status, str(ver.status))
                 if ver.status == VerificationStatus.blocked:
                     raise StageBlocked(note + " — " + "; ".join(ver.reasons))
                 if ver.status in (VerificationStatus.failed,) and attempt < max_attempts:
-                    self._note(jid, "verification", note + " — retrying repair with failure evidence")
+                    self._note(jid, "verification", note + " — trying again, using what went wrong")
                 elif ver.status in (VerificationStatus.inconclusive, VerificationStatus.incomplete):
                     raise StageInconclusive(note + " — " + "; ".join(ver.reasons))
                 else:
