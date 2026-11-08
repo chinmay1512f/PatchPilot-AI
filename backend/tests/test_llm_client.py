@@ -80,6 +80,22 @@ def test_malformed_output_retried_then_fails(settings):
     assert "did not validate" in str(msgs.parse_calls[1]["messages"][-1]["content"])
 
 
+def test_cut_off_answer_is_retried_with_a_shorter_request(settings):
+    """The SDK raises ValidationError while parsing a truncated answer; that must retry, not crash the stage."""
+    from pydantic import ValidationError
+    try:
+        Out.model_validate_json('{"answer": "a very long text that was cut')
+    except ValidationError as e:
+        cut = e
+    ok = SimpleNamespace(stop_reason="end_turn", parsed_output=Out(answer="short", score=1), content=[], usage=usage())
+    fake, msgs = sdk(parse_responses=[cut, ok])
+    assert LLMClient(settings, sdk_client=fake).structured(agent="a", system="s", messages="hi", output_model=Out).answer == "short"
+    assert "shorter" in str(msgs.parse_calls[1]["messages"][-1]["content"])
+    fake, _ = sdk(parse_responses=[cut, cut])
+    with pytest.raises(LLMOutputInvalid):  # an LLMError the agents already handle, never a raw ValidationError
+        LLMClient(settings, sdk_client=fake).structured(agent="a", system="s", messages="hi", output_model=Out)
+
+
 def test_malformed_then_valid_recovers(settings):
     bad = SimpleNamespace(stop_reason="end_turn", parsed_output=None, content=[text_block("not json")], usage=usage())
     good = SimpleNamespace(stop_reason="end_turn", parsed_output=None, content=[text_block('{"answer": "ok", "score": 3}')], usage=usage())

@@ -467,3 +467,8 @@ td input[type="checkbox"], th input[type="checkbox"] { accent-color: var(--accen
 .rem-head.rem-ok { border-left-color: var(--ok); }
 .rem-head.rem-warn { border-left-color: var(--warn); }
 .rem-head.rem-bad { border-left-color: var(--bad); }
+
+/* roadmap: completed with problems found (amber, like warn) */
+.rm-found .rm-dot { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+.rm-found .rm-status { color: var(--warn); }
+.rm-step.rm-found::before { background: var(--ok-mark, var(--ok)); }

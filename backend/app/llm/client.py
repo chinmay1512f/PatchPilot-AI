@@ -270,9 +270,16 @@ class LLMClient:
         last_error = ""
         for attempt in range(2):
             if attempt == 1:
-                msgs = with_user_turn(msgs, f"Your previous output did not validate ({last_error[:400]}). Return only a valid object matching the schema.")
+                shorter = " Keep every text field shorter so the whole answer fits." if "cut off" in last_error or "truncated" in last_error else ""
+                msgs = with_user_turn(msgs, f"Your previous output did not validate ({last_error[:400]}). Return only a valid object matching the schema.{shorter}")
             extra: dict = {"tools": [t.to_api() for t in tools], "tool_choice": {"type": "none"}} if tools else {}
-            resp = self._call(lambda: client.beta.messages.parse(system=SECURITY_PREAMBLE + "\n" + system, messages=msgs, output_format=output_model, **extra, **self._common(effort)))
+            try:
+                resp = self._call(lambda: client.beta.messages.parse(system=SECURITY_PREAMBLE + "\n" + system, messages=msgs, output_format=output_model, **extra, **self._common(effort)))
+            except ValidationError as e:
+                # The SDK validates while parsing, so an answer cut off by the output limit (or malformed JSON)
+                # lands here before stop_reason can be checked. Retry once, asking for a shorter answer.
+                last_error = f"output was cut off or did not match the schema: {str(e)[:200]}"
+                continue
             self._account(agent, getattr(resp, "usage", None))
             self._check_refusal(resp)
             if getattr(resp, "stop_reason", None) == "max_tokens":

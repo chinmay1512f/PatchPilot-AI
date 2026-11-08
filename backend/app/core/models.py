@@ -108,9 +108,12 @@ class LanguageStat(BaseModel):
 class Dependency(BaseModel):
     name: str
     version: str | None = None
-    ecosystem: str  # PyPI, npm
+    ecosystem: str  # PyPI, npm, Go, crates.io, RubyGems, Packagist
     manifest: str
-    pinned: bool = False
+    pinned: bool = False  # an exact version is known
+    requested: str | None = None  # the version range as written in the manifest
+    direct: bool = True  # False = installed only because another package needs it
+    source: Literal["manifest", "lockfile", "resolved"] = "manifest"  # resolved = newest version the range allows today
 
 
 class SpecialFile(BaseModel):

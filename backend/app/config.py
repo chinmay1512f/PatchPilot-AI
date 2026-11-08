@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     fast_mode: bool = True  # Claude fast mode: up to ~2.5x faster output at 2x price; falls back automatically
     llm_timeout_seconds: float = 300.0
     llm_max_retries: int = 2
-    max_output_tokens: int = 16000
+    max_output_tokens: int = 32000  # includes Claude's reasoning; long structured answers (triage + explanations) need room
     # live: real API calls. record: real calls + save outputs. replay: reuse a recorded run
     # (clearly labelled in the UI; tool execution is still real).
     llm_mode: Literal["live", "record", "replay"] = "live"

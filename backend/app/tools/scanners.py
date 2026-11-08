@@ -24,6 +24,7 @@ import httpx
 
 from ..config import PROJECT_DIR, Settings
 from ..core.models import CodeQualitySummary, Confidence, ScannerRun, SecurityFinding, SecurityReport, Severity, new_id
+from ..ingest.dependencies import UNSUPPORTED, resolve_ranges
 from ..ingest.indexer import RepoIndex
 from ..ingest.secrets import find_secrets, redact
 from .malware import run_clamav
@@ -243,23 +244,32 @@ def run_suspicious(index: RepoIndex) -> tuple[ScannerRun, list[SecurityFinding]]
 
 
 def run_osv(index: RepoIndex, settings: Settings, client_factory: Callable[[], httpx.Client] | None = None) -> tuple[ScannerRun, list[SecurityFinding]]:
+    """Known vulnerabilities (OSV.dev) for the exact versions in use: lock files first, otherwise the
+    newest version each range allows today (resolved from the npm / PyPI registry and labelled)."""
     deps = index.facts.dependencies
-    if not deps:
-        return ScannerRun(name="osv", status="skipped", message="no dependency manifests found"), []
     if not settings.osv_enabled or _disabled(settings, "osv"):
         return ScannerRun(name="osv", status="skipped", message="disabled by configuration"), []
-    pinned = [d for d in deps if d.version and d.pinned]
-    unpinned = [d.name for d in deps if not (d.version and d.pinned)]
-    if not pinned:
-        return ScannerRun(name="osv", status="skipped", message=f"no pinned versions to check ({len(unpinned)} unpinned)"), []
+    if not deps:
+        other = sorted({UNSUPPORTED[Path(m).name] for m in index.facts.manifests if Path(m).name in UNSUPPORTED})
+        if other:
+            return ScannerRun(name="osv", status="skipped", message=f"dependency files for {', '.join(other)} are not supported yet"), []
+        return ScannerRun(name="osv", status="skipped", message="no dependency manifests found"), []
     start = time.monotonic()
-    queries = [{"package": {"name": d.name, "ecosystem": d.ecosystem}, "version": d.version} for d in pinned]
+    exact = [d for d in deps if d.pinned and d.version]
+    ranged = [d for d in deps if not (d.pinned and d.version)]
     try:
         with (client_factory() if client_factory else httpx.Client(timeout=20)) as client:
-            resp = client.post("https://api.osv.dev/v1/querybatch", json={"queries": queries})
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-            pairs = [(dep, v["id"]) for dep, res in zip(pinned, results, strict=False) for v in (res.get("vulns") or [])]
+            resolved, unresolved = resolve_ranges(ranged, client) if ranged else ([], [])
+            checked = (sorted(exact, key=lambda d: not d.direct) + resolved)[:2000]
+            if not checked:
+                return ScannerRun(name="osv", status="skipped", message=f"could not determine versions for {len(unresolved)} package(s)"), []
+            pairs = []
+            for i in range(0, len(checked), 1000):  # OSV accepts up to 1,000 queries per batch
+                batch = checked[i:i + 1000]
+                resp = client.post("https://api.osv.dev/v1/querybatch", json={"queries": [
+                    {"package": {"name": d.name, "ecosystem": d.ecosystem}, "version": d.version} for d in batch]})
+                resp.raise_for_status()
+                pairs += [(dep, v["id"]) for dep, res in zip(batch, resp.json().get("results", []), strict=False) for v in (res.get("vulns") or [])]
 
             def detail(vid: str) -> dict:
                 try:
@@ -267,7 +277,7 @@ def run_osv(index: RepoIndex, settings: Settings, client_factory: Callable[[], h
                 except (httpx.HTTPError, ValueError):
                     return {}
 
-            ids = list(dict.fromkeys(vid for _, vid in pairs))[:60]
+            ids = list(dict.fromkeys(vid for _, vid in pairs))[:80]
             with ThreadPoolExecutor(max_workers=8) as pool:
                 details = dict(zip(ids, pool.map(detail, ids), strict=True))
             findings = []
@@ -276,17 +286,26 @@ def run_osv(index: RepoIndex, settings: Settings, client_factory: Callable[[], h
                 summary = d.get("summary") or (d.get("details") or "")[:300]
                 sev = _sev((d.get("database_specific") or {}).get("severity"), Severity.medium)
                 aliases = d.get("aliases") or []
+                sep = "==" if dep.ecosystem == "PyPI" else "@"
+                how = ("" if dep.direct else " Indirect dependency: installed because another package needs it.") + (
+                    f" Version resolved from '{dep.requested}': the newest version that range allows today, which a fresh install "
+                    "would use (no lock file)." if dep.source == "resolved" else "")
                 findings.append(SecurityFinding(
                     id=new_id("sec"), scanner="osv", category="dependency", rule_id=vid,
-                    title=f"{dep.name}=={dep.version}: {vid}", severity=sev, confidence=Confidence.high,
-                    file_path=dep.manifest, line=None, snippet=f"{dep.name}=={dep.version}",
-                    description=(summary or "Known vulnerability in this pinned version.") + (f" Aliases: {', '.join(aliases[:4])}." if aliases else ""),
+                    title=f"{dep.name}{sep}{dep.version}: {vid}", severity=sev, confidence=Confidence.high,
+                    file_path=dep.manifest, line=None, snippet=f"{dep.name}{sep}{dep.version}",
+                    description=(summary or "Known vulnerability in this version.") + (f" Aliases: {', '.join(aliases[:4])}." if aliases else "") + how,
                     references=[f"https://osv.dev/vulnerability/{vid}"],
                 ))
     except (httpx.HTTPError, ValueError) as e:
         return ScannerRun(name="osv", status="failed", message=f"OSV API unreachable: {type(e).__name__}"), []
-    msg = f"checked {len(pinned)} pinned packages" + (f"; {len(unpinned)} unpinned not checked" if unpinned else "")
-    return ScannerRun(name="osv", version="api.osv.dev v1", status="completed", findings=len(findings), duration_seconds=round(time.monotonic() - start, 2), message=msg), findings
+    locked = sum(1 for d in checked if d.source == "lockfile")
+    parts = [f"{locked} exact from lock files"] if locked else []
+    parts += [f"{len(exact) - locked} exact in manifests"] if len(exact) > locked else []
+    parts += [f"{len(resolved)} resolved from version ranges"] if resolved else []
+    msg = f"checked {len(checked)} package versions ({', '.join(parts)})" + (f"; {len(unresolved)} could not be resolved" if unresolved else "")
+    return ScannerRun(name="osv", version="api.osv.dev v1", status="completed", findings=len(findings),
+                      duration_seconds=round(time.monotonic() - start, 2), message=msg), findings
 
 
 # --------------------------------------------------------------------------- aggregate

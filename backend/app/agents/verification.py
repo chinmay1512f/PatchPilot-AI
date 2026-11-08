@@ -113,9 +113,14 @@ def security_review(ctx: AgentContext, include_osv: bool = True) -> SecurityRepo
     # The two Claude reviews are independent (triage annotates findings, malware writes report.malware),
     # so they run at the same time.
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="review") as pool:
-        jobs = [pool.submit(triage, ctx, report, ctx.index), pool.submit(malware_review, ctx, report, ctx.index)]
-        for j in jobs:
-            j.result()
+        jobs = {"triage": pool.submit(triage, ctx, report, ctx.index), "malware review": pool.submit(malware_review, ctx, report, ctx.index)}
+        for name, j in jobs.items():
+            try:
+                j.result()
+            except Exception as e:  # noqa: BLE001 — an AI review failing must never discard the scanner results
+                ctx.log("verification", f"{name} failed: {type(e).__name__}: {str(e)[:200]}")
+                if name == "triage":
+                    report.triage_status = f"failed: {type(e).__name__}"
     # Runs after triage so findings judged likely false positives are not chained.
     try:
         report.attack_paths = attack_paths.analyse(ctx, report, ctx.index)

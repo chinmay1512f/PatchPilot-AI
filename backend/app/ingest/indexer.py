@@ -18,6 +18,7 @@ from pathlib import Path
 
 from ..core.models import Dependency, LanguageStat, RepoFacts, SpecialFile
 from .archive import SKIP_DIRS
+from .dependencies import LOCK_FILES, UNSUPPORTED, merge_lockfiles
 from .secrets import redact
 
 LANGUAGES = {
@@ -153,8 +154,27 @@ def _parse_requirements(text: str, manifest: str) -> list[Dependency]:
         m = REQ_RE.match(line)
         if m:
             name = re.sub(r"\[.*\]", "", m.group(1))
-            deps.append(Dependency(name=name, version=m.group(3), ecosystem="PyPI", manifest=manifest, pinned=m.group(2) == "=="))
+            spec = line[m.end(1):].split(";", 1)[0].strip()
+            deps.append(Dependency(name=name, version=m.group(3), ecosystem="PyPI", manifest=manifest, pinned=m.group(2) == "==",
+                                   requested=spec))
     return deps
+
+
+def _poetry_spec(v: str | None) -> str:
+    """Poetry ``^1.2`` / ``~1.2`` → PEP 440 range for resolving the newest allowed version."""
+    if not v:
+        return ""
+    v = v.strip()
+    m = re.fullmatch(r"([\^~])(\d+)(?:\.(\d+))?(?:\.(\d+))?", v)
+    if not m:
+        return v if v[:1] in "<>=!~" else (f"=={v}" if v[:1].isdigit() else "")
+    op, major, minor, patch = m.group(1), int(m.group(2)), m.group(3), m.group(4)
+    low = ".".join(x for x in (str(major), minor, patch) if x is not None)
+    if op == "^":
+        upper = f"{major + 1}" if major or minor is None else (f"0.{int(minor) + 1}" if int(minor) or patch is None else f"0.0.{int(patch) + 1}")
+    else:
+        upper = f"{major + 1}" if minor is None else f"{major}.{int(minor) + 1}"
+    return f">={low},<{upper}"
 
 
 def _parse_pyproject(text: str, manifest: str) -> list[Dependency]:
@@ -170,7 +190,8 @@ def _parse_pyproject(text: str, manifest: str) -> list[Dependency]:
             continue
         v = ver if isinstance(ver, str) else (ver.get("version") if isinstance(ver, dict) else None)
         pinned = bool(v and re.fullmatch(r"=?=?\d[\w.]*", v))
-        deps.append(Dependency(name=name, version=(v or "").lstrip("=^~") or None, ecosystem="PyPI", manifest=manifest, pinned=pinned))
+        deps.append(Dependency(name=name, version=(v or "").lstrip("=^~") or None, ecosystem="PyPI", manifest=manifest, pinned=pinned,
+                               requested=_poetry_spec(v)))
     return deps
 
 
@@ -185,7 +206,8 @@ def _parse_package_json(text: str, manifest: str) -> tuple[list[Dependency], dic
             if not isinstance(ver, str):
                 continue
             clean = ver.lstrip("^~=v ")
-            deps.append(Dependency(name=name, version=clean or None, ecosystem="npm", manifest=manifest, pinned=ver[:1].isdigit()))
+            deps.append(Dependency(name=name, version=clean or None, ecosystem="npm", manifest=manifest,
+                                   pinned=bool(re.fullmatch(r"=?v?\d+\.\d+\.\d+", ver.strip())), requested=ver.strip()))
     return deps, data.get("scripts") or {}
 
 
@@ -228,6 +250,7 @@ def build_index(root: Path, *, max_file_kb: int = 256, max_tree: int = 400) -> R
     root = root.resolve()
     files: dict[str, IndexedFile] = {}
     skipped: list[str] = []
+    dep_files: list[str] = []  # lock files and other dependency files, recorded even when too large to index
     total = 0
     for path in sorted(root.rglob("*")):
         rel_parts = path.relative_to(root).parts
@@ -240,6 +263,8 @@ def build_index(root: Path, *, max_file_kb: int = 256, max_tree: int = 400) -> R
             continue
         total += 1
         rel = "/".join(rel_parts)
+        if path.name in LOCK_FILES or path.name in UNSUPPORTED:
+            dep_files.append(rel)
         size = path.stat().st_size
         ext = path.suffix.lower()
         lang = LANGUAGES.get(ext)
@@ -288,7 +313,7 @@ def build_index(root: Path, *, max_file_kb: int = 256, max_tree: int = 400) -> R
             special.append(SpecialFile(path=f.path, reason="setup.py executes arbitrary code at install/build time"))
             if "cmdclass" in (f.text or ""):
                 special.append(SpecialFile(path=f.path, reason="setup.py overrides install commands (cmdclass)"))
-        elif name in ("Pipfile", "poetry.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "go.mod", "Cargo.toml", "Gemfile"):
+        elif name in ("Pipfile", "Cargo.toml", "Gemfile", "composer.json"):
             manifests.append(f.path)
         if f.language in ("Shell", "PowerShell", "Batch"):
             special.append(SpecialFile(path=f.path, reason=f"{f.language} script"))
@@ -296,6 +321,8 @@ def build_index(root: Path, *, max_file_kb: int = 256, max_tree: int = 400) -> R
             special.append(SpecialFile(path=f.path, reason="pytest conftest.py runs automatically when tests are collected"))
         if name.endswith(".pth"):
             special.append(SpecialFile(path=f.path, reason=".pth files can execute code at interpreter start-up"))
+
+    manifests += [p for p in dep_files if p not in manifests]  # lock files / unsupported dependency files
 
     # ---- frameworks
     blob_names = " ".join(d.name.lower() for d in deps)
@@ -335,7 +362,7 @@ def build_index(root: Path, *, max_file_kb: int = 256, max_tree: int = 400) -> R
         languages=languages,
         frameworks=frameworks,
         manifests=sorted(manifests),
-        dependencies=deps,
+        dependencies=merge_lockfiles(root, deps, [p for p in dep_files if Path(p).name in LOCK_FILES]),
         test_framework=test_framework,
         test_files=test_files,
         config_files=config_files,

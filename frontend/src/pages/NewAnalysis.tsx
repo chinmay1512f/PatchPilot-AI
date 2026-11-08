@@ -87,6 +87,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [sampleNote, setSampleNote] = useState("");
+  const [sampleBug, setSampleBug] = useState(false);  // a bundled sample's bug report rides along with full analysis
 
   useEffect(() => { api.samples().then(setSamples).catch(() => setSamples([])); }, []);
 
@@ -107,9 +108,12 @@ export function NewAnalysis({ health }: { health: Health | null }) {
     setErr("");
     setBusy(true);
     try {
-      setType(s.analysis_type);
+      // Samples open as a full analysis so every roadmap step runs (the patch-review sample needs its own mode).
+      const t = s.analysis_type === "patch_review" ? "patch_review" : "full_analysis";
+      setType(t);
       setName(s.name);
-      setBug(s.analysis_type === "full_analysis" ? "" : s.bug_description || "");
+      setBug(s.bug_description || "");
+      setSampleBug(t === "full_analysis" && !!s.bug_description);
       setRepo({ mode: "zip", file: await api.sampleZip(s.name, "repo"), url: "" });
       setModified({ mode: "zip", file: s.analysis_type === "patch_review" ? await api.sampleZip(s.name, "modified") : null, url: "" });
       setSampleNote(`Loaded bundled sample “${s.title}”. It will be uploaded and analysed exactly like any other repository.`);
@@ -134,7 +138,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
     }
     form.append("analysis_type", type);
     form.append("project_name", name);
-    form.append("bug_description", needsBug || type === "patch_review" ? bug : "");
+    form.append("bug_description", needsBug || type === "patch_review" || (isFull && sampleBug) ? bug : "");
     form.append("allow_local_execution", String(allowLocal));
     form.append("run_security_scan", String(isFull ? true : security));
     form.append("auto_remediate", String(fixable && autoFix));
@@ -171,7 +175,7 @@ export function NewAnalysis({ health }: { health: Health | null }) {
           <div className="card stack">
             <div className="card-head" style={{ marginBottom: 0 }}><span className="step-num">1</span><h2>Add repository</h2></div>
             {sampleNote && <div className="alert info">{sampleNote}</div>}
-            <SourcePicker value={repo} onChange={(v) => { setRepo(v); setSampleNote(""); setName(""); }} label={type === "patch_review" ? "Original version" : "Repository"} />
+            <SourcePicker value={repo} onChange={(v) => { setRepo(v); setSampleNote(""); setName(""); setSampleBug(false); }} label={type === "patch_review" ? "Original version" : "Repository"} />
           </div>
 
           <div className="card stack">
@@ -202,7 +206,9 @@ export function NewAnalysis({ health }: { health: Health | null }) {
             {isFull && (
               <div className="subtle small" style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
                 <span style={{ color: "var(--accent)", marginTop: 1 }}><Icon name="sparkle" size={16} /></span>
-                <span>No bug description needed — PatchPilot audits the code to <strong>find bugs on its own</strong>, proves the most important one with a failing test, then fixes and verifies it. The project name is taken from the repository.</span>
+                {sampleBug
+                  ? <span>This sample comes with its own bug report, so PatchPilot investigates that bug: <em>“{bug.trim().slice(0, 160)}{bug.trim().length > 160 ? "…" : ""}”</em> Everything else (security scan, attack paths, fixes, risk score) runs as usual.</span>
+                  : <span>No bug description needed — PatchPilot audits the code to <strong>find bugs on its own</strong>, proves the most important one with a failing test, then fixes and verifies it. The project name is taken from the repository.</span>}
               </div>
             )}
             {(needsBug || type === "patch_review") && (
