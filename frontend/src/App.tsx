@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, apiUrl } from "./api";
+import { api } from "./api";
 import type { Health } from "./types";
 import { Icon } from "./ui";
 import { Dashboard } from "./pages/Dashboard";
@@ -69,12 +69,9 @@ export function App() {
       <main className="container">{page}</main>
       <footer className="footer">
         <div className="footer-inner">
-          <span>Powered by <strong style={{ color: "var(--text-2)" }}>Claude</strong> · Anthropic API</span>
           <span className="spacer" />
           <span>Version 0.1 · AgentX Hackathon build</span>
           <span className="spacer" />
-          <a href={apiUrl("/api/docs")} target="_blank" rel="noreferrer">API docs</a>
-          <span>Original code is never modified</span>
         </div>
       </footer>
     </div>
